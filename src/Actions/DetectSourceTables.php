@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Actions;
 
-use Illuminate\Support\Facades\Config;
 use Mahbub\SchemaTools\Support\ConnectionDetection;
 use Mahbub\SchemaTools\Support\DetectionResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
 use Mahbub\SchemaTools\Support\ModelScanner;
+use Mahbub\SchemaTools\Support\ScanPaths;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
+use Symfony\Component\Finder\Finder;
 
 /**
  * Detects the source tables and views the project relies on and reconciles them
@@ -19,10 +20,12 @@ use Mahbub\SchemaTools\Support\SchemaFixtureParser;
  * Tables are discovered, project-wide, from three places:
  *   - every concrete Eloquent model on a fixture-backed connection (its own
  *     table, plus any relationship pivot declared with a `table:` named argument)
- *   - every table/view referenced by the raw SQL inside the queries path — a
+ *   - every table/view referenced by the raw SQL inside the queries paths — a
  *     three-part `Database.dbo.Name` reference is routed to the connection that
  *     owns that database; a one/two-part name is attributed to the connection(s)
- *     the query file talks to via `DB::connection('...')`
+ *     the query file talks to via `DB::connection('...')` or a
+ *     `$connection = '...'` property. Common table expressions and temp tables
+ *     are not tables and are left out.
  *   - every base table a committed `<connection>-views.sql` joins, so tables
  *     used only inside a view still get pulled
  *
@@ -37,6 +40,7 @@ final readonly class DetectSourceTables
         private Manifest $manifest,
         private ModelScanner $modelScanner,
         private SchemaFixtureParser $parser,
+        private ScanPaths $scanPaths,
     ) {}
 
     public function handle(): DetectionResult
@@ -50,29 +54,29 @@ final readonly class DetectSourceTables
         /** @var array<string, string> $canonical Lowercase name => preferred casing. */
         $canonical = [];
 
-        foreach ($this->modelScanner->scan(Config::string('schema-tools.models_path')) as $scanned) {
-            $connection = $scanned->model->getConnectionName();
+        foreach ($this->scanPaths->resolve('models_path') as $path) {
+            foreach ($this->modelScanner->scan($path) as $scanned) {
+                $connection = $scanned->model->getConnectionName();
 
-            if ($connection === null || !in_array($connection, $connections, true)) {
-                continue;
-            }
+                if ($connection === null || !in_array($connection, $connections, true)) {
+                    continue;
+                }
 
-            $table = $scanned->model->getTable();
-            $detected[$connection][] = $table;
-            $canonical[strtolower($table)] ??= $table;
+                $table = $scanned->model->getTable();
+                $detected[$connection][] = $table;
+                $canonical[strtolower($table)] ??= $table;
 
-            if (preg_match_all("/table: '([^']+)'/", $scanned->contents, $pivotMatches) > 0) {
-                foreach ($pivotMatches[1] as $pivot) {
-                    $detected[$connection][] = $pivot;
+                if (preg_match_all("/table: '([^']+)'/", $scanned->contents, $pivotMatches) > 0) {
+                    foreach ($pivotMatches[1] as $pivot) {
+                        $detected[$connection][] = $pivot;
+                    }
                 }
             }
         }
 
         foreach ($this->queryFiles() as $file) {
             $contents = (string) file_get_contents($file);
-
-            preg_match_all("/DB::connection\('([^']+)'\)/", $contents, $connectionMatches);
-            $fileConnections = array_values(array_intersect(array_unique($connectionMatches[1]), $connections));
+            $fileConnections = array_values(array_intersect($this->connectionsNamedIn($contents), $connections));
 
             if ($fileConnections === []) {
                 continue;
@@ -92,9 +96,7 @@ final readonly class DetectSourceTables
                 continue;
             }
 
-            $viewSql = (string) preg_replace('/--[^\n]*/', '', (string) file_get_contents($viewsPath));
-
-            foreach ($this->tablesReferencedIn($viewSql, [$connection], $databaseMap, $connections) as $viewConnection => $names) {
+            foreach ($this->tablesReferencedIn((string) file_get_contents($viewsPath), [$connection], $databaseMap, $connections) as $viewConnection => $names) {
                 foreach ($names as $name) {
                     $detected[$viewConnection][] = $name;
                 }
@@ -151,13 +153,42 @@ final readonly class DetectSourceTables
     }
 
     /**
+     * The PHP files under the configured queries paths, recursively and in name
+     * order.
+     *
      * @return list<string>
      */
     private function queryFiles(): array
     {
-        $files = glob(Config::string('schema-tools.queries_path') . '/*.php');
+        $directories = $this->scanPaths->resolve('queries_path');
 
-        return $files === false ? [] : $files;
+        if ($directories === []) {
+            return [];
+        }
+
+        $files = [];
+
+        foreach (Finder::create()->in($directories)->files()->name('*.php')->sortByName() as $file) {
+            $files[] = $file->getPathname();
+        }
+
+        return $files;
+    }
+
+    /**
+     * The connections a query file talks to, named through `DB::connection('x')`
+     * or a `$connection = 'x'` property.
+     *
+     * @return list<string>
+     */
+    private function connectionsNamedIn(string $php): array
+    {
+        preg_match_all("/DB::connection\\('([^']+)'\\)|\\\$connection\\s*=\\s*'([^']+)'/", $php, $matches);
+
+        return array_values(array_unique(array_filter(
+            [...$matches[1], ...$matches[2]],
+            static fn (string $name): bool => $name !== '',
+        )));
     }
 
     /**
@@ -179,7 +210,8 @@ final readonly class DetectSourceTables
 
     /**
      * The tables named after a FROM/JOIN/INTO/UPDATE in a block of SQL, grouped
-     * by the connection that owns them.
+     * by the connection that owns them. Comments are ignored, as are temp tables
+     * (`#name`) and the names a `WITH name AS (...)` clause defines.
      *
      * @param  list<string>  $fileConnections
      * @param  array<string, string>  $databaseMap
@@ -188,8 +220,13 @@ final readonly class DetectSourceTables
      */
     private function tablesReferencedIn(string $sql, array $fileConnections, array $databaseMap, array $connections): array
     {
+        $sql = (string) preg_replace(['~--[^\n]*~', '~/\*.*?\*/~s'], '', $sql);
+
+        preg_match_all('/\b([A-Za-z_]\w*)\s+AS\s*\(/i', $sql, $expressionMatches);
+        $commonTableExpressions = array_map(strtolower(...), $expressionMatches[1]);
+
         preg_match_all(
-            '/\b(?:FROM|JOIN|INTO|UPDATE)\s+((?:\[[^\]]+\]|[A-Za-z_#][\w$#]*)(?:\.(?:\[[^\]]+\]|[\w$#]*)){0,2})/i',
+            '/\b(?:FROM|JOIN|INTO|UPDATE)\s+((?:\[[^\]]+\]|`[^`]+`|[A-Za-z_#][\w$#]*)(?:\.(?:\[[^\]]+\]|`[^`]+`|[\w$#]*)){0,2})/i',
             $sql,
             $matches,
         );
@@ -198,7 +235,7 @@ final readonly class DetectSourceTables
 
         foreach ($matches[1] as $reference) {
             $parts = array_values(array_filter(
-                array_map(static fn (string $part): string => trim($part, '[]'), explode('.', $reference)),
+                array_map(static fn (string $part): string => trim($part, '[]`'), explode('.', $reference)),
                 static fn (string $part): bool => $part !== '',
             ));
 
@@ -208,7 +245,7 @@ final readonly class DetectSourceTables
 
             $name = end($parts);
 
-            if (str_starts_with($name, '#')) {
+            if (str_starts_with($name, '#') || in_array(strtolower($name), $commonTableExpressions, true)) {
                 continue;
             }
 

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Mahbub\SchemaTools\Queries;
+namespace Mahbub\SchemaTools\Queries\SqlServer;
 
 use Illuminate\Database\DatabaseManager;
 

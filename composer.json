@@ -1,11 +1,13 @@
 {
     "name": "mahbubhelal/schema-tools",
-    "description": "Laravel Artisan commands that keep SQL Server schema fixtures, Eloquent models and model factories in agreement with the live source databases.",
+    "description": "Laravel Artisan commands that keep SQL Server and MySQL schema fixtures, Eloquent models and model factories in agreement with the live source databases.",
     "type": "library",
     "keywords": [
         "laravel",
         "sqlsrv",
         "sql-server",
+        "mysql",
+        "mariadb",
         "schema",
         "fixtures",
         "eloquent",
@@ -37,6 +39,9 @@
         "pestphp/pest-plugin-laravel": "^3.0 || ^4.0",
         "phpstan/phpstan-strict-rules": "^2.0",
         "rector/rector": "^2.0"
+    },
+    "suggest": {
+        "mahbubhelal/refresh-databases": "Loads the <connection>-schema.sql, -views.sql and -seed.sql fixtures this package maintains into the test databases (FastRefreshDatabases)."
     },
     "autoload": {
         "psr-4": {

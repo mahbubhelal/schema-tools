@@ -11,7 +11,7 @@ final readonly class ConnectionDump
      * @param  string|null  $viewsContent  Reconstructed view DDL, or null when the connection has no views.
      * @param  list<string>  $warnings  Not-found, wrong-type, dropped and source-failure notes.
      * @param  bool  $failed  A source query failed; the fixtures must be left untouched.
-     * @param  bool  $skipped  The connection has no manifest entries.
+     * @param  bool  $skipped  The connection was not dumped at all; $skipReason says why.
      */
     public function __construct(
         public string $connection,
@@ -24,5 +24,6 @@ final readonly class ConnectionDump
         public array $warnings,
         public bool $failed,
         public bool $skipped,
+        public ?string $skipReason = null,
     ) {}
 }

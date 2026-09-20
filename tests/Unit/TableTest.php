@@ -60,4 +60,8 @@ it('resolves the effective primary key when :dataset', function (Table $table, a
         ], []),
         [],
     ],
+    'a lone MySQL auto-increment without a constraint is not a key' => [
+        new Table(['Id' => new Column('int', false, false, true)], [], identityIsKey: false),
+        [],
+    ],
 ])->group('need_review');

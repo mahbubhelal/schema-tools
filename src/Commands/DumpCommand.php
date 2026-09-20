@@ -8,27 +8,36 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\App;
 use Mahbub\SchemaTools\Actions\DumpSourceSchema;
 use Mahbub\SchemaTools\Support\ConnectionDump;
+use Mahbub\SchemaTools\Support\FixtureConnections;
 
 /**
  * Pick the source database with Laravel's standard `--env` option:
  *   php artisan schema:dump                  # reads from .env
  *   php artisan schema:dump --env=staging    # reads from .env.staging
  *   php artisan schema:dump --env=production --dry-run
+ *   php artisan schema:dump --env=staging --connection=sugar --connection=cid
  */
 final class DumpCommand extends Command
 {
-    protected $signature = 'schema:dump {--dry-run : Read the source and preview the diff without writing the fixtures}';
+    protected $signature = 'schema:dump
+        {--dry-run : Read the source and preview the diff without writing the fixtures}
+        {--connection=* : Only rebuild the fixtures of these connections}';
 
-    protected $description = 'Rebuild the T-SQL schema fixtures from the source database named in the manifest';
+    protected $description = 'Rebuild the schema fixtures from the source databases, using the names in the manifest';
 
-    public function handle(DumpSourceSchema $dumpSourceSchema): int
+    public function handle(DumpSourceSchema $dumpSourceSchema, FixtureConnections $connections): int
     {
         $write = $this->option('dry-run') !== true;
+        $only = $this->onlyConnections();
 
         $this->line('Source environment: ' . App::environmentFile());
         $this->newLine();
 
-        foreach ($dumpSourceSchema->handle()->connections as $connection) {
+        foreach (array_diff($only, $connections->all()) as $unknown) {
+            $this->warn("[{$unknown}] is not a fixture-backed connection, ignored");
+        }
+
+        foreach ($dumpSourceSchema->handle($only)->connections as $connection) {
             $this->report($connection, $write);
         }
 
@@ -45,7 +54,7 @@ final class DumpCommand extends Command
         }
 
         if ($dump->skipped) {
-            $this->line("[{$dump->connection}] no manifest entries, skipped");
+            $this->line("[{$dump->connection}] {$dump->skipReason}, skipped");
 
             return;
         }
@@ -68,6 +77,22 @@ final class DumpCommand extends Command
 
         $verb = $write ? 'wrote' : 'would write';
         $this->line("[{$dump->connection}] {$verb} " . implode(', ', $report));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function onlyConnections(): array
+    {
+        $only = [];
+
+        foreach ((array) $this->option('connection') as $connection) {
+            if (is_string($connection) && $connection !== '') {
+                $only[] = $connection;
+            }
+        }
+
+        return $only;
     }
 
     private function putFixture(string $path, string $contents, bool $write): bool

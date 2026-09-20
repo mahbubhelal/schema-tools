@@ -9,10 +9,12 @@ final readonly class Table
     /**
      * @param  array<string, Column>  $columns  Column name (DDL casing) => shape.
      * @param  list<string>  $primaryKey  Primary-key column names, in key order.
+     * @param  bool  $identityIsKey  Whether a lone identity column stands in for a missing PRIMARY KEY: true for SQL Server, where a legacy table often carries an IDENTITY without a formal constraint; false for MySQL, where AUTO_INCREMENT only needs an index, unique or not.
      */
     public function __construct(
         public array $columns,
         public array $primaryKey,
+        public bool $identityIsKey = true,
     ) {}
 
     public function hasColumn(string $name): bool
@@ -54,9 +56,9 @@ final readonly class Table
     }
 
     /**
-     * The effective primary key: the declared PRIMARY KEY, or — for a legacy
-     * table that carries a lone IDENTITY column without a formal constraint —
-     * that identity column as its surrogate key.
+     * The effective primary key: the declared PRIMARY KEY, or — where the
+     * dialect implies it — a lone identity column as the surrogate key of a
+     * legacy table without a formal constraint.
      *
      * @return list<string>
      */
@@ -64,6 +66,10 @@ final readonly class Table
     {
         if ($this->primaryKey !== []) {
             return $this->primaryKey;
+        }
+
+        if (!$this->identityIsKey) {
+            return [];
         }
 
         $identities = $this->identityColumns();

@@ -78,3 +78,41 @@ it('leaves the manifest with no stale entries when everything is still reference
 
     expect(detect()->hasStale())->toBeFalse();
 })->group('need_review');
+
+it('detects MySQL query tables through a connection property, past comments, backticks, CTEs and derived tables', function (): void {
+    Config::set('schema-tools.models_path', dirname(__DIR__) . '/Fixtures/DetectMySql/Models');
+    Config::set('schema-tools.queries_path', dirname(__DIR__) . '/Fixtures/DetectMySql/Queries');
+    $this->workspaceFile('sugar-schema.sql', "CREATE TABLE `contacts` (\n  `id` int NOT NULL\n) ENGINE=InnoDB;");
+    $this->workspaceFile('source-tables.php', "<?php return ['sugar' => []];");
+
+    $sugar = collect(detect()->connections)->firstWhere('connection', 'sugar');
+
+    expect($sugar->additions)->toBe(['accounts', 'accounts_contacts', 'contacts', 'users']);
+})->group('need_review');
+
+it('scans every configured models and queries path, including glob patterns', function (): void {
+    Config::set('schema-tools.models_path', [
+        dirname(__DIR__) . '/Fixtures/Detect/Models',
+        dirname(__DIR__) . '/Fixtures/DetectMySql/Models',
+    ]);
+    Config::set('schema-tools.queries_path', dirname(__DIR__) . '/Fixtures/Detect*/Queries');
+    $this->workspaceFile('sugar-schema.sql', '');
+    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => [], 'sugar' => []];");
+
+    $result = detect();
+
+    $tcb = collect($result->connections)->firstWhere('connection', 'tcb');
+    $sugar = collect($result->connections)->firstWhere('connection', 'sugar');
+
+    expect($tcb->additions)->toBe(['AuditLog', 'Center', 'CenterProduct', 'Ephemeral', 'press'])
+        ->and($sugar->additions)->toBe(['accounts', 'accounts_contacts', 'contacts', 'users']);
+})->group('need_review');
+
+it('detects nothing from queries when no queries path exists', function (): void {
+    Config::set('schema-tools.queries_path', $this->workspace . '/no-queries');
+    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => []];");
+
+    $tcb = collect(detect()->connections)->firstWhere('connection', 'tcb');
+
+    expect($tcb->additions)->toBe(['AuditLog', 'Center', 'CenterProduct']);
+})->group('need_review');

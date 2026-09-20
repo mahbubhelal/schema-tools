@@ -5,10 +5,16 @@ declare(strict_types=1);
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Mahbub\SchemaTools\Actions\DumpSourceSchema;
-use Mahbub\SchemaTools\Queries\FetchPrimaryKeyColumns;
-use Mahbub\SchemaTools\Queries\FetchTableColumns;
-use Mahbub\SchemaTools\Queries\FetchViewDefinition;
-use Mahbub\SchemaTools\Queries\ResolveObject;
+use Mahbub\SchemaTools\Dialects\Dialects;
+use Mahbub\SchemaTools\Dialects\MySqlDialect;
+use Mahbub\SchemaTools\Dialects\SqlServerDialect;
+use Mahbub\SchemaTools\Queries\MySql\FetchCreateTable;
+use Mahbub\SchemaTools\Queries\MySql\FetchCreateView;
+use Mahbub\SchemaTools\Queries\MySql\ResolveObject as ResolveMySqlObject;
+use Mahbub\SchemaTools\Queries\SqlServer\FetchPrimaryKeyColumns;
+use Mahbub\SchemaTools\Queries\SqlServer\FetchTableColumns;
+use Mahbub\SchemaTools\Queries\SqlServer\FetchViewDefinition;
+use Mahbub\SchemaTools\Queries\SqlServer\ResolveObject;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
@@ -72,11 +78,25 @@ const AUDIT_SCHEMA = <<<'SQL'
         [Id] int IDENTITY(1,1) NOT NULL,
         PRIMARY KEY ([Id])
     );
+
+    CREATE TABLE [dbo].[Heap] (
+        [Name] nvarchar(50) NOT NULL
+    );
+
+    CREATE TABLE [dbo].[HeapIncrementing] (
+        [Name] nvarchar(50) NOT NULL
+    );
+
+    CREATE TABLE [dbo].[KeyedHeap] (
+        [KeyedHeapId] int NOT NULL,
+        PRIMARY KEY ([KeyedHeapId])
+    );
     SQL;
 
 const AUDIT_TABLES = [
     'Passing', 'Undeclared', 'NoPk', 'Composite', 'PkMismatch',
     'IncMismatch', 'KeyMismatch', 'TimestampsMissing', 'TimestampsUndeclared',
+    'Heap', 'HeapIncrementing', 'KeyedHeap',
 ];
 
 const FACTORY_SCHEMA = <<<'SQL'
@@ -137,46 +157,52 @@ function col(
 }
 
 /**
- * A DatabaseManager whose `tcb` connection is the given mocked source connection.
+ * A DatabaseManager whose named connection is the given mocked source connection.
  */
-function sourceDatabaseFor(Connection $connection): DatabaseManager
+function sourceDatabaseFor(Connection $connection, string $name = 'tcb'): DatabaseManager
 {
     $database = Mockery::mock(DatabaseManager::class);
-    $database->shouldReceive('connection')->with('tcb')->andReturn($connection);
+    $database->shouldReceive('connection')->with($name)->andReturn($connection);
 
     return $database;
 }
 
 /**
- * A DumpSourceSchema wired to real queries backed by the given source connection.
+ * Both dialects wired to real queries backed by the given database manager.
  */
-function dumpActionFor(Connection $connection): DumpSourceSchema
+function dialectsFor(DatabaseManager $database): Dialects
 {
-    $database = sourceDatabaseFor($connection);
-
-    return new DumpSourceSchema(
-        new FixtureConnections,
-        new Manifest,
-        new SchemaFixtureParser,
-        new ResolveObject($database),
-        new FetchTableColumns($database),
-        new FetchPrimaryKeyColumns($database),
-        new FetchViewDefinition($database),
+    return new Dialects(
+        new MySqlDialect(new ResolveMySqlObject($database), new FetchCreateTable($database), new FetchCreateView($database)),
+        new SqlServerDialect(
+            new ResolveObject($database),
+            new FetchTableColumns($database),
+            new FetchPrimaryKeyColumns($database),
+            new FetchViewDefinition($database),
+        ),
     );
 }
 
 /**
- * Bind the four source queries — backed by the given mocked connection — into the
+ * A DumpSourceSchema wired to real queries backed by the given source connection.
+ */
+function dumpActionFor(Connection $connection, string $name = 'tcb'): DumpSourceSchema
+{
+    return new DumpSourceSchema(
+        new FixtureConnections,
+        new Manifest,
+        new SchemaFixtureParser,
+        dialectsFor(sourceDatabaseFor($connection, $name)),
+    );
+}
+
+/**
+ * Bind the dialects — backed by the given mocked connection — into the
  * container, so a command's DumpSourceSchema resolves against them.
  */
-function bindSourceQueries(Connection $connection): void
+function bindSourceQueries(Connection $connection, string $name = 'tcb'): void
 {
-    $database = sourceDatabaseFor($connection);
-
-    app()->instance(ResolveObject::class, new ResolveObject($database));
-    app()->instance(FetchTableColumns::class, new FetchTableColumns($database));
-    app()->instance(FetchPrimaryKeyColumns::class, new FetchPrimaryKeyColumns($database));
-    app()->instance(FetchViewDefinition::class, new FetchViewDefinition($database));
+    app()->instance(Dialects::class, dialectsFor(sourceDatabaseFor($connection, $name)));
 }
 
 function resolvesTo(Connection $connection, string $name, ?object $object): void
@@ -211,4 +237,29 @@ function viewDefinition(Connection $connection, string $view, string $definition
     $connection->shouldReceive('selectOne')
         ->withArgs(fn (string $sql, array $b): bool => str_contains($sql, 'sys.sql_modules') && $b === ['dbo.' . $view])
         ->andReturn((object) ['definition' => $definition]);
+}
+
+function mysqlResolvesTo(Connection $connection, string $name, ?object $object): void
+{
+    $connection->shouldReceive('selectOne')
+        ->withArgs(fn (string $sql, array $bindings = []): bool => str_contains($sql, 'information_schema.TABLES') && $bindings === [$name])
+        ->andReturn($object);
+}
+
+/**
+ * Stub SHOW CREATE TABLE for a MySQL table; a null statement yields a row that
+ * carries no `Create Table` column, as MySQL answers for a view.
+ */
+function createTable(Connection $connection, string $table, ?string $statement): void
+{
+    $connection->shouldReceive('selectOne')
+        ->with('SHOW CREATE TABLE `' . $table . '`')
+        ->andReturn((object) ($statement === null ? ['View' => $table] : ['Table' => $table, 'Create Table' => $statement]));
+}
+
+function createView(Connection $connection, string $view, ?string $statement): void
+{
+    $connection->shouldReceive('selectOne')
+        ->with('SHOW CREATE VIEW `' . $view . '`')
+        ->andReturn($statement === null ? null : (object) ['View' => $view, 'Create View' => $statement]);
 }

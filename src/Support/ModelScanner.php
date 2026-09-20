@@ -12,7 +12,8 @@ use Throwable;
 /**
  * Discovers the concrete Eloquent models under a directory, reflecting and
  * instantiating each so its connection, table and key metadata can be read. A
- * class that cannot be autoloaded, reflected or instantiated is skipped.
+ * class that cannot be autoloaded, reflected or instantiated is skipped. Files
+ * are visited in name order so every report is deterministic.
  */
 final class ModelScanner
 {
@@ -27,7 +28,7 @@ final class ModelScanner
 
         $models = [];
 
-        foreach (Finder::create()->in($path)->files()->name('*.php') as $file) {
+        foreach (Finder::create()->in($path)->files()->name('*.php')->sortByName() as $file) {
             $contents = $file->getContents();
 
             if (preg_match('/^namespace ([^;]+);/m', $contents, $namespaceMatch) !== 1) {

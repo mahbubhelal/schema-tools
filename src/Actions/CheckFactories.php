@@ -8,12 +8,12 @@ use Closure;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\Sequence;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Config;
 use Mahbub\SchemaTools\Support\ColumnType;
 use Mahbub\SchemaTools\Support\FactoryCheckResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
 use Mahbub\SchemaTools\Support\Report;
+use Mahbub\SchemaTools\Support\ScanPaths;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
 use Mahbub\SchemaTools\Support\Table;
 use ReflectionClass;
@@ -21,10 +21,10 @@ use Symfony\Component\Finder\Finder;
 use Throwable;
 
 /**
- * Checks every model factory on a fixture-backed connection against the T-SQL
- * DDL. A base definition() must contain exactly the columns an INSERT would be
+ * Checks every model factory on a fixture-backed connection against the DDL.
+ * A base definition() must contain exactly the columns an INSERT would be
  * rejected without. Reported per factory:
- *   1. a required column (NOT NULL, no default, not identity) missing
+ *   1. a required column (NOT NULL, no default, not identity/auto-increment) missing
  *   2. a nullable column present — belongs in a state
  *   3. a NOT NULL column with a database default present — omitting it cannot error
  *   4. a value whose PHP type does not fit the column's SQL type
@@ -37,6 +37,7 @@ final readonly class CheckFactories
         private FixtureConnections $connections,
         private Manifest $manifest,
         private SchemaFixtureParser $parser,
+        private ScanPaths $scanPaths,
     ) {}
 
     public function handle(): FactoryCheckResult
@@ -57,7 +58,7 @@ final readonly class CheckFactories
         /** @var array<string, bool> $skippedConnections */
         $skippedConnections = [];
 
-        foreach ($this->factories(Config::string('schema-tools.factories_path')) as $factory) {
+        foreach ($this->factories() as $factory) {
             $modelClass = $factory->modelName();
             /** @var Model $model */
             $model = new $modelClass;
@@ -174,20 +175,23 @@ final readonly class CheckFactories
     }
 
     /**
-     * The concrete factories under a directory. A class that cannot be
-     * autoloaded, reflected or instantiated is skipped.
+     * The concrete factories under the configured factories paths, in name
+     * order. A class that cannot be autoloaded, reflected or instantiated is
+     * skipped.
      *
      * @return list<Factory<Model>>
      */
-    private function factories(string $path): array
+    private function factories(): array
     {
-        if (!is_dir($path)) {
+        $directories = $this->scanPaths->resolve('factories_path');
+
+        if ($directories === []) {
             return [];
         }
 
         $factories = [];
 
-        foreach (Finder::create()->in($path)->files()->name('*.php') as $file) {
+        foreach (Finder::create()->in($directories)->files()->name('*.php')->sortByName() as $file) {
             if (preg_match('/^namespace ([^;]+);/m', $file->getContents(), $namespaceMatch) !== 1) {
                 continue;
             }

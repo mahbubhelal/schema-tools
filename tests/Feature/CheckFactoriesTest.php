@@ -46,3 +46,29 @@ it('returns nothing when the factories directory does not exist', function (): v
         ->factories->toBe([])
         ->skippedConnections->toBe([]);
 })->group('need_review');
+
+it('checks a factory against a MySQL fixture, treating auto-increment and defaults as omittable', function (): void {
+    Config::set('schema-tools.factories_path', [
+        dirname(__DIR__) . '/Fixtures/CheckFactoriesMySql/Factories',
+        $this->workspace . '/does-not-exist',
+    ]);
+    $this->workspaceFile('sugar-schema.sql', <<<'SQL'
+        CREATE TABLE `contacts` (
+          `id` char(36) NOT NULL,
+          `seq` int NOT NULL AUTO_INCREMENT,
+          `is_deleted` tinyint(1) NOT NULL,
+          `date_entered` datetime NOT NULL,
+          `status` varchar(20) NOT NULL DEFAULT 'new',
+          `note` text,
+          PRIMARY KEY (`id`)
+        ) ENGINE=InnoDB;
+        SQL);
+    $this->workspaceFile('source-tables.php', "<?php return ['sugar' => ['contacts']];");
+
+    $result = resolve(CheckFactories::class)->handle();
+
+    expect($result)
+        ->factories->toBe([])
+        ->checked->toBe(1)
+        ->skippedConnections->toBe([]);
+})->group('need_review');

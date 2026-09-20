@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Connection;
+use Illuminate\Support\Facades\Config;
 
 use function Pest\Laravel\artisan;
 
@@ -74,6 +75,36 @@ it('reports a fixture as unchanged when it already matches the source', function
 
     artisan('schema:dump')
         ->expectsOutputToContain('[tcb] wrote 1 table(s) [unchanged]')
+        ->assertExitCode(0);
+})->group('need_review');
+
+it('dumps only the connections named with --connection and flags unknown ones', function (): void {
+    $this->workspaceFile('tcb-schema.sql', '');
+    $this->workspaceFile('tcbpermission-schema.sql', '');
+    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center'], 'tcbpermission' => ['MasterProduct']];");
+
+    stubCenter($this->connection);
+    bindSourceQueries($this->connection);
+
+    artisan('schema:dump --connection=tcb --connection=nowhere')
+        ->expectsOutputToContain('[nowhere] is not a fixture-backed connection, ignored')
+        ->expectsOutputToContain('[tcb] wrote 1 table(s) [changed]')
+        ->doesntExpectOutputToContain('[tcbpermission]')
+        ->assertExitCode(0);
+
+    expect(is_file($this->workspace . '/tcbpermission-schema.sql'))->toBeTrue()
+        ->and(file_get_contents($this->workspace . '/tcbpermission-schema.sql'))->toBe('');
+})->group('need_review');
+
+it('reports a hand-maintained connection as skipped', function (): void {
+    $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
+    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    Config::set('schema-tools.hand_maintained', ['tcb']);
+
+    bindSourceQueries($this->connection);
+
+    artisan('schema:dump')
+        ->expectsOutputToContain('[tcb] fixtures are maintained by hand, skipped')
         ->assertExitCode(0);
 })->group('need_review');
 

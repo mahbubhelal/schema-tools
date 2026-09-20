@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Connection;
+use Illuminate\Support\Facades\Config;
 
 beforeEach(function (): void {
     $this->connection = Mockery::mock(Connection::class);
@@ -162,4 +163,44 @@ it('leaves the fixtures untouched when a source query fails', function (): void 
         ->warnings->toBe(['source query failed (source down), fixtures left untouched'])
         ->schemaContent->toBeNull()
         ->tableCount->toBe(0);
+})->group('need_review');
+
+it('normalises Windows line endings in a verbatim view definition', function (): void {
+    $this->workspaceFile('tcb-schema.sql', '');
+    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['vCenter']];");
+
+    resolvesTo($this->connection, 'vCenter', (object) ['name' => 'vCenter', 'type' => 'V ']);
+    viewDefinition($this->connection, 'vCenter', "CREATE VIEW [dbo].[vCenter]\r\nAS\r\nSELECT 1 AS one\r\n");
+
+    $dump = dumpActionFor($this->connection)->handle()->connections[0];
+
+    expect($dump->viewsContent)->toBe("DROP VIEW IF EXISTS [dbo].[vCenter];\n\nCREATE VIEW [dbo].[vCenter]\nAS\nSELECT 1 AS one;\n");
+})->group('need_review');
+
+it('restricts a run to the requested connections', function (): void {
+    $this->workspaceFile('tcb-schema.sql', '');
+    $this->workspaceFile('tcbpermission-schema.sql', '');
+    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center'], 'tcbpermission' => ['MasterProduct']];");
+
+    stubCenter($this->connection);
+
+    $connections = dumpActionFor($this->connection)->handle(['tcb'])->connections;
+
+    expect($connections)->toHaveCount(1)
+        ->and($connections[0]->connection)->toBe('tcb')
+        ->and($connections[0]->tableCount)->toBe(1);
+})->group('need_review');
+
+it('skips a hand-maintained connection without touching the source', function (): void {
+    $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
+    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    Config::set('schema-tools.hand_maintained', ['tcb']);
+
+    $dump = dumpActionFor($this->connection)->handle()->connections[0];
+
+    expect($dump)
+        ->skipped->toBeTrue()
+        ->skipReason->toBe('fixtures are maintained by hand')
+        ->schemaContent->toBeNull()
+        ->warnings->toBe([]);
 })->group('need_review');

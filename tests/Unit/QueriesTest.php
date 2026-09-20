@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
-use Mahbub\SchemaTools\Queries\FetchPrimaryKeyColumns;
-use Mahbub\SchemaTools\Queries\FetchTableColumns;
-use Mahbub\SchemaTools\Queries\FetchViewDefinition;
-use Mahbub\SchemaTools\Queries\ResolveObject;
+use Mahbub\SchemaTools\Queries\SqlServer\FetchPrimaryKeyColumns;
+use Mahbub\SchemaTools\Queries\SqlServer\FetchTableColumns;
+use Mahbub\SchemaTools\Queries\SqlServer\FetchViewDefinition;
+use Mahbub\SchemaTools\Queries\SqlServer\ResolveObject;
 
 /**
  * @param  list<object>  $rows

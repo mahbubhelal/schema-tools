@@ -38,6 +38,8 @@ abstract class TestCase extends TestbenchTestCase
 
         $app['config']->set('database.connections.tcb', $this->sourceConnection('TCB'));
         $app['config']->set('database.connections.tcbpermission', $this->sourceConnection('TCBPermission'));
+        $app['config']->set('database.connections.sugar', $this->sourceConnection('sugar', 'mysql'));
+        $app['config']->set('database.connections.legacy', $this->sourceConnection('legacy', 'pgsql'));
 
         $app['config']->set('schema-tools.schema_path', $this->workspace);
         $app['config']->set('schema-tools.manifest_path', $this->workspace . '/source-tables.php');
@@ -67,10 +69,10 @@ abstract class TestCase extends TestbenchTestCase
     /**
      * @return array<string, mixed>
      */
-    private function sourceConnection(string $database): array
+    private function sourceConnection(string $database, string $driver = 'sqlsrv'): array
     {
         return [
-            'driver' => 'sqlsrv',
+            'driver' => $driver,
             'host' => 'localhost',
             'port' => '1433',
             'database' => $database,

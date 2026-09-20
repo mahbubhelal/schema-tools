@@ -4,32 +4,32 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Actions;
 
-use Mahbub\SchemaTools\Queries\FetchPrimaryKeyColumns;
-use Mahbub\SchemaTools\Queries\FetchTableColumns;
-use Mahbub\SchemaTools\Queries\FetchViewDefinition;
-use Mahbub\SchemaTools\Queries\ResolveObject;
+use Illuminate\Support\Facades\Config;
+use Mahbub\SchemaTools\Dialects\Dialect;
+use Mahbub\SchemaTools\Dialects\Dialects;
 use Mahbub\SchemaTools\Support\ConnectionDump;
 use Mahbub\SchemaTools\Support\DumpResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
+use Mahbub\SchemaTools\Support\ObjectKind;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
+use Mahbub\SchemaTools\Support\SourceObject;
 use Throwable;
 
 /**
- * Rebuilds the T-SQL fixtures from the live SQL Server the fixture-backed
- * connections point at, using the names in the curated manifest.
+ * Rebuilds the fixtures from the live database each fixture-backed connection
+ * points at, using the names in the curated manifest.
  *
- * Each manifest name is resolved against the catalog: base tables are
- * reconstructed from sys.columns / sys.identity_columns / sys.default_constraints
- * / sys.key_constraints, and views are pulled verbatim from sys.sql_modules. The
- * existing file's order is preserved so the git diff stays readable; a name the
- * source no longer has, or a fixture object no longer in the manifest, is dropped
- * with a warning.
+ * Each manifest name is resolved against the source catalog and rebuilt by the
+ * dialect the connection's driver calls for (SQL Server or MySQL/MariaDB) —
+ * tables into `<connection>-schema.sql`, views into `<connection>-views.sql`.
+ * The existing file's order is preserved so the git diff stays readable; a name
+ * the source no longer has, or a fixture object no longer in the manifest, is
+ * dropped with a warning. Connections listed in `schema-tools.hand_maintained`
+ * are audited like any other but never dumped.
  *
  * This action only reads the source and computes the fixture content; the command
  * decides whether to write it.
- *
- * @phpstan-import-type TableColumnRow from FetchTableColumns
  */
 final readonly class DumpSourceSchema
 {
@@ -37,18 +37,22 @@ final readonly class DumpSourceSchema
         private FixtureConnections $connections,
         private Manifest $manifest,
         private SchemaFixtureParser $parser,
-        private ResolveObject $resolveObject,
-        private FetchTableColumns $fetchTableColumns,
-        private FetchPrimaryKeyColumns $fetchPrimaryKeyColumns,
-        private FetchViewDefinition $fetchViewDefinition,
+        private Dialects $dialects,
     ) {}
 
-    public function handle(): DumpResult
+    /**
+     * @param  list<string>  $only  Restrict the run to these connections; empty means all.
+     */
+    public function handle(array $only = []): DumpResult
     {
         $manifest = $this->manifest->load();
         $dumps = [];
 
         foreach ($this->connections->all() as $connection) {
+            if ($only !== [] && !in_array($connection, $only, true)) {
+                continue;
+            }
+
             $dumps[] = $this->dumpConnection($connection, $manifest[$connection] ?? []);
         }
 
@@ -63,8 +67,21 @@ final readonly class DumpSourceSchema
         $schemaPath = $this->connections->schemaFile($connection);
         $viewsPath = $this->connections->viewsFile($connection);
 
+        if (in_array($connection, Config::array('schema-tools.hand_maintained', []), true)) {
+            return new ConnectionDump($connection, $schemaPath, $viewsPath, null, null, 0, 0, [], failed: false, skipped: true, skipReason: 'fixtures are maintained by hand');
+        }
+
         if ($names === []) {
-            return new ConnectionDump($connection, $schemaPath, $viewsPath, null, null, 0, 0, [], failed: false, skipped: true);
+            return new ConnectionDump($connection, $schemaPath, $viewsPath, null, null, 0, 0, [], failed: false, skipped: true, skipReason: 'no manifest entries');
+        }
+
+        $dialect = $this->dialects->forConnection($connection);
+
+        if (!$dialect instanceof Dialect) {
+            $driver = Config::get("database.connections.{$connection}.driver");
+            $warning = 'driver `' . (is_string($driver) ? $driver : '?') . '` is not supported (mysql, mariadb, sqlsrv), fixtures left untouched';
+
+            return new ConnectionDump($connection, $schemaPath, $viewsPath, null, null, 0, 0, [$warning], failed: true, skipped: false);
         }
 
         /** @var array<string, string> $tables Lowercase => canonical. */
@@ -77,18 +94,18 @@ final readonly class DumpSourceSchema
 
         try {
             foreach ($names as $name) {
-                $object = $this->resolveObject->execute($connection, $name);
+                $object = $dialect->resolve($connection, $name);
 
-                if ($object === null) {
+                if (!$object instanceof SourceObject) {
                     $warnings[] = "`{$name}` not found at source, skipped";
 
                     continue;
                 }
 
-                match (trim($object->type)) {
-                    'U' => $tables[strtolower($object->name)] = $object->name,
-                    'V' => $views[strtolower($object->name)] = $object->name,
-                    default => $warnings[] = "`{$name}` is neither a table nor a view, skipped",
+                match ($object->kind) {
+                    ObjectKind::Table => $tables[strtolower($object->name)] = $object->name,
+                    ObjectKind::View => $views[strtolower($object->name)] = $object->name,
+                    ObjectKind::Other => $warnings[] = "`{$name}` is neither a table nor a view, skipped",
                 };
             }
 
@@ -99,8 +116,8 @@ final readonly class DumpSourceSchema
                 $warnings[] = "`{$dropped}` in the fixture is no longer in the manifest, dropped";
             }
 
-            $tableBlocks = array_map(fn (string $table): string => $this->reconstructTable($connection, $table), $tableOrder['ordered']);
-            $viewBlocks = array_map(fn (string $view): string => $this->reconstructView($connection, $view), $viewOrder['ordered']);
+            $tableBlocks = array_map(static fn (string $table): string => $dialect->tableBlock($connection, $table), $tableOrder['ordered']);
+            $viewBlocks = array_map(static fn (string $view): string => $dialect->viewBlock($connection, $view), $viewOrder['ordered']);
         } catch (Throwable $throwable) {
             $warnings[] = "source query failed ({$throwable->getMessage()}), fixtures left untouched";
 
@@ -111,82 +128,14 @@ final readonly class DumpSourceSchema
             connection: $connection,
             schemaPath: $schemaPath,
             viewsPath: $viewsPath,
-            schemaContent: $tableBlocks === [] ? null : implode("\n\n", $tableBlocks) . "\n",
-            viewsContent: $viewBlocks === [] ? null : implode("\n\n", $viewBlocks) . "\n",
+            schemaContent: $tableBlocks === [] ? null : $dialect->schemaFixture($connection, $tableBlocks),
+            viewsContent: $viewBlocks === [] ? null : $dialect->viewsFixture($viewBlocks),
             tableCount: count($tableBlocks),
             viewCount: count($viewBlocks),
             warnings: $warnings,
             failed: false,
             skipped: false,
         );
-    }
-
-    private function reconstructTable(string $connection, string $table): string
-    {
-        $lines = array_map($this->columnLine(...), $this->fetchTableColumns->execute($connection, $table));
-
-        $primaryKey = $this->fetchPrimaryKeyColumns->execute($connection, $table);
-
-        if ($primaryKey !== []) {
-            $keyColumns = implode(', ', array_map($this->keyColumn(...), $primaryKey));
-            $lines[] = "    PRIMARY KEY ({$keyColumns})";
-        }
-
-        return "CREATE TABLE [dbo].[{$table}] (\n" . implode(",\n", $lines) . "\n);";
-    }
-
-    /**
-     * @param  object{name: string}  $row
-     */
-    private function keyColumn(object $row): string
-    {
-        return "[{$row->name}]";
-    }
-
-    private function reconstructView(string $connection, string $view): string
-    {
-        $definition = rtrim(rtrim((string) $this->fetchViewDefinition->execute($connection, $view)), ';');
-
-        return "DROP VIEW IF EXISTS [dbo].[{$view}];\n\n{$definition};";
-    }
-
-    /**
-     * @param  TableColumnRow  $column
-     */
-    private function columnLine(object $column): string
-    {
-        $line = "    [{$column->name}] " . $this->formatType(
-            $column->type_name,
-            (int) $column->max_length,
-            (int) $column->numeric_precision,
-            (int) $column->numeric_scale,
-        );
-
-        if ((int) $column->is_identity === 1) {
-            $line .= ' IDENTITY(' . (int) $column->seed_value . ',' . (int) $column->increment_value . ')';
-        } elseif ($column->collation_name !== null) {
-            $line .= " COLLATE {$column->collation_name}";
-        }
-
-        $line .= (int) $column->is_nullable === 1 ? ' NULL' : ' NOT NULL';
-
-        if ($column->default_definition !== null) {
-            $line .= " DEFAULT {$column->default_definition}";
-        }
-
-        return $line;
-    }
-
-    private function formatType(string $typeName, int $maxLength, int $precision, int $scale): string
-    {
-        $type = strtolower($typeName);
-
-        return match ($type) {
-            'nvarchar', 'nchar' => $type . '(' . ($maxLength === -1 ? 'MAX' : (int) ($maxLength / 2)) . ')',
-            'varchar', 'char', 'binary', 'varbinary' => $type . '(' . ($maxLength === -1 ? 'MAX' : $maxLength) . ')',
-            'decimal', 'numeric' => "{$type}({$precision},{$scale})",
-            default => $type,
-        };
     }
 
     /**

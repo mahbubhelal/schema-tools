@@ -11,7 +11,7 @@ it('registers the schema commands and merges its config', function (): void {
 
     expect($commands)->toContain('schema:detect', 'schema:dump', 'schema:audit')
         ->and(config('schema-tools'))
-        ->toHaveKeys(['schema_path', 'manifest_path', 'models_path', 'queries_path', 'factories_path']);
+        ->toHaveKeys(['schema_path', 'manifest_path', 'models_path', 'queries_path', 'factories_path', 'squashed_migrations', 'hand_maintained']);
 })->group('need_review');
 
 it('registers nothing when not running in the console', function (): void {
