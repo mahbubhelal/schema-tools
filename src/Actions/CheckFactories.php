@@ -26,7 +26,7 @@ use Throwable;
  * rejected without. Reported per factory:
  *   1. a required column (NOT NULL, no default, not identity/auto-increment) missing
  *   2. a nullable column present — belongs in a state
- *   3. a NOT NULL column with a database default present — omitting it cannot error
+ *   3. a NOT NULL column with a database default, or an identity, present — omitting it cannot error
  *   4. a value whose PHP type does not fit the column's SQL type
  *   5. an entry for a column the DDL does not have
  *   6. a table not tracked in the manifest
@@ -142,8 +142,10 @@ final readonly class CheckFactories
 
             if ($meta->nullable) {
                 $issues[] = "{$column}: nullable ({$meta->type}) — must not be in definition(), move to a state";
-            } elseif (!$meta->isRequired()) {
-                $issues[] = "{$column}: has a database default or is an identity — omitting it cannot error, drop from definition()";
+            } elseif ($meta->isIdentity) {
+                $issues[] = "{$column}: is an identity the server assigns — drop from definition()";
+            } elseif ($meta->hasDefault) {
+                $issues[] = "{$column}: has a database default — omitting it cannot error, drop from definition()";
             }
 
             if ($value instanceof Factory || $value instanceof Sequence) {

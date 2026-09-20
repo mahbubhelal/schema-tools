@@ -233,3 +233,24 @@ it('marks identity as a surrogate key for T-SQL tables but not for MySQL tables'
     expect($tsql['Center']->identityIsKey)->toBeTrue()
         ->and($mysql['contacts']->identityIsKey)->toBeFalse();
 })->group('need_review');
+
+it('treats a primary-key column declared without nullability as NOT NULL', function (): void {
+    $path = $this->workspaceFile('tcb-schema.sql', <<<'SQL'
+        CREATE TABLE Tcb.dbo.Tags (
+            TagId int,
+            TagName nvarchar(255),
+            PRIMARY KEY (TagId)
+        );
+        SQL);
+
+    $tables = (new SchemaFixtureParser)->parseTables($path);
+
+    expect($tables['Tags'])->primaryKey->toBe(['TagId']);
+
+    expect($tables['Tags']->columns['TagId'])
+        ->nullable->toBeFalse()
+        ->isRequired()->toBeTrue();
+
+    expect($tables['Tags']->columns['TagName'])
+        ->nullable->toBeTrue();
+})->group('need_review');

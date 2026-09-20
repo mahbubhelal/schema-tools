@@ -15,8 +15,9 @@ it('checks every factory definition against the DDL and manifest', function (): 
     $byLocation = collect($result->factories)->keyBy('location');
 
     expect($byLocation['tcb.FBad']->issues)->toBe([
+        'Id: is an identity the server assigns — drop from definition()',
         'Note: nullable (nvarchar(50)) — must not be in definition(), move to a state',
-        'Status: has a database default or is an identity — omitting it cannot error, drop from definition()',
+        'Status: has a database default — omitting it cannot error, drop from definition()',
         'fullname: case mismatch — the DDL declares `FullName`',
         'Bogus: not a column of tcb.FBad',
         "Age: 'text' (string) does not fit int",

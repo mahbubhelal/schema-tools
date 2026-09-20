@@ -22,6 +22,7 @@ final class IssuesFactory extends Factory
     public function definition(): array
     {
         return [
+            'Id' => 7,
             'Note' => 'x',
             'Status' => 5,
             'fullname' => 'y',

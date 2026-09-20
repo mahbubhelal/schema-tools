@@ -47,22 +47,14 @@ final class SchemaFixtureParser
                 continue;
             }
 
+            $primaryKey = $this->primaryKey($body);
+            $keyColumns = array_map(strtolower(...), $primaryKey);
             $columns = [];
-            $primaryKey = [];
 
             foreach (explode("\n", $body) as $line) {
                 $line = trim($line);
 
                 if ($line === '' || str_starts_with($line, '--')) {
-                    continue;
-                }
-
-                if (preg_match('/^(?:CONSTRAINT\s+\S+\s+)?PRIMARY KEY\s*\((.+?)\)/i', $line, $pkMatch) === 1) {
-                    $primaryKey = array_map(
-                        static fn (string $column): string => trim($column, " \t[]`"),
-                        explode(',', $pkMatch[1]),
-                    );
-
                     continue;
                 }
 
@@ -77,11 +69,14 @@ final class SchemaFixtureParser
                     continue;
                 }
 
-                // A generated column is filled in by the server, so for the
-                // purposes of "can an INSERT omit it" it behaves like a default.
+                // A primary-key column is NOT NULL even when its own line does
+                // not say so: both dialects imply it, and a hand-written fixture
+                // may leave the nullability out. A generated column is filled in
+                // by the server, so for the purposes of "can an INSERT omit it"
+                // it behaves like a default.
                 $columns[$column] = new Column(
                     type: strtolower(preg_replace('/\s+/', '', $columnMatch[4]) ?? $columnMatch[4]),
-                    nullable: preg_match('/\bNOT\s+NULL\b/i', $line) !== 1,
+                    nullable: preg_match('/\bNOT\s+NULL\b/i', $line) !== 1 && !in_array(strtolower($column), $keyColumns, true),
                     hasDefault: preg_match('/\bDEFAULT\b|\bGENERATED ALWAYS\b/i', $line) === 1,
                     isIdentity: preg_match('/\bIDENTITY\s*\(|\bAUTO_INCREMENT\b/i', $line) === 1,
                 );
@@ -117,6 +112,24 @@ final class SchemaFixtureParser
         return array_map(
             static fn (array $match): string => $match[1] ?? $match[2] ?? $match[3] ?? '',
             $matches,
+        );
+    }
+
+    /**
+     * The columns of the table's PRIMARY KEY clause, in key order and as the
+     * DDL writes them; empty when the table declares none.
+     *
+     * @return list<string>
+     */
+    private function primaryKey(string $body): array
+    {
+        if (preg_match('/^\s*(?:CONSTRAINT\s+\S+\s+)?PRIMARY KEY\s*\((.+?)\)/im', $body, $match) !== 1) {
+            return [];
+        }
+
+        return array_map(
+            static fn (string $column): string => trim($column, " \t[]`"),
+            explode(',', $match[1]),
         );
     }
 }
