@@ -25,10 +25,11 @@ return [
     | Table manifest
     |--------------------------------------------------------------------------
     |
-    | The curated list of source tables and views this project relies on, per
-    | connection. It is seeded by `schema:detect` and then hand-curated;
-    | `schema:dump` and `schema:audit` read it. Returns
-    | array<string, list<string>>.
+    | The source tables and views this project relies on, per connection, in
+    | two sections: `manual` (yours; no command ever touches it) above
+    | `generated` (rebuilt by `schema:detect` on every run). `schema:dump` and
+    | `schema:audit` read both together. Returns
+    | array{manual: array<string, list<string>>, generated: array<string, list<string>>}.
     |
     */
 

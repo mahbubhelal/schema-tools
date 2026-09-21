@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Config;
 use Mahbub\SchemaTools\Actions\CheckFactories;
+use Mahbub\SchemaTools\Support\Report;
+use Mahbub\SchemaTools\Tests\Fixtures\CheckFactories\Factories\DefaultConnFactory;
+use Mahbub\SchemaTools\Tests\Fixtures\CheckFactoriesMySql\Factories\ContactFactory;
 
 it('checks every factory definition against the DDL and manifest', function (): void {
     Config::set('schema-tools.factories_path', dirname(__DIR__) . '/Fixtures/CheckFactories/Factories');
     $this->workspaceFile('tcb-schema.sql', FACTORY_SCHEMA);
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['FBad', 'FThrower', 'FNoSchemaTable']];");
+    $this->manifestFile(['tcb' => ['FBad', 'FThrower', 'FNoSchemaTable', 'FPassing']]);
 
     $result = resolve(CheckFactories::class)->handle();
 
@@ -29,11 +32,11 @@ it('checks every factory definition against the DDL and manifest', function (): 
     expect($byLocation['tcb.FUntracked']->issues)->toBe(['table `FUntracked` is not tracked in the manifest']);
     expect($byLocation['tcb.FNoSchemaTable']->issues)->toBe(['table `FNoSchemaTable` is not in tcb-schema.sql']);
     expect($byLocation['tcb.FThrower']->issues)->toBe(['definition() could not be evaluated: kaboom']);
+    expect($byLocation['tcb.FPassing']->issues)->toBe([]);
 
     expect($result)
-        ->factories->toHaveCount(4)
-        ->checked->toBe(4)
-        ->skippedConnections->toBe(['(default)']);
+        ->factories->toHaveCount(5)
+        ->skipped->toEqual([new Report(DefaultConnFactory::class, Config::string('database.default') . '.FDefaulter', [])]);
 })->group('need_review');
 
 it('returns nothing when the factories directory does not exist', function (): void {
@@ -43,9 +46,8 @@ it('returns nothing when the factories directory does not exist', function (): v
     $result = resolve(CheckFactories::class)->handle();
 
     expect($result)
-        ->checked->toBe(0)
         ->factories->toBe([])
-        ->skippedConnections->toBe([]);
+        ->skipped->toBe([]);
 })->group('need_review');
 
 it('checks a factory against a MySQL fixture, treating auto-increment and defaults as omittable', function (): void {
@@ -64,12 +66,11 @@ it('checks a factory against a MySQL fixture, treating auto-increment and defaul
           PRIMARY KEY (`id`)
         ) ENGINE=InnoDB;
         SQL);
-    $this->workspaceFile('source-tables.php', "<?php return ['sugar' => ['contacts']];");
+    $this->manifestFile(['sugar' => ['contacts']]);
 
     $result = resolve(CheckFactories::class)->handle();
 
     expect($result)
-        ->factories->toBe([])
-        ->checked->toBe(1)
-        ->skippedConnections->toBe([]);
+        ->factories->toEqual([new Report(ContactFactory::class, 'sugar.contacts', [])])
+        ->skipped->toBe([]);
 })->group('need_review');

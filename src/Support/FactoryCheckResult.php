@@ -7,14 +7,12 @@ namespace Mahbub\SchemaTools\Support;
 final readonly class FactoryCheckResult
 {
     /**
-     * @param  list<Report>  $factories  Only the factories that have issues.
-     * @param  int  $checked  Total factories evaluated.
-     * @param  list<string>  $skippedConnections  Connections without a fixture.
+     * @param  list<Report>  $factories  One per checked factory, passing or not.
+     * @param  list<Report>  $skipped  Factories whose model is on a non-fixture connection, left unchecked.
      */
     public function __construct(
         public array $factories,
-        public int $checked,
-        public array $skippedConnections,
+        public array $skipped,
     ) {}
 
     public function issueCount(): int

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mahbub\SchemaTools\Actions;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Config;
 use Mahbub\SchemaTools\Support\ColumnType;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
@@ -23,7 +24,8 @@ use ReflectionClass;
  * primary key, and a model mapped onto a view in the views fixture must declare
  * no key, no incrementing and no timestamps — then cross-checks the
  * manifest: every listed name must exist in the connection's schema or views
- * fixture, and every fixture object must appear in the manifest.
+ * fixture, and every fixture object must appear in the manifest. A model on a
+ * connection without a fixture is not audited but is reported as skipped.
  */
 final readonly class AuditModels
 {
@@ -51,7 +53,7 @@ final readonly class AuditModels
         }
 
         $reports = [];
-        $skipped = 0;
+        $skipped = [];
 
         foreach ($this->scanPaths->resolve('models_path') as $path) {
             foreach ($this->modelScanner->scan($path) as $scanned) {
@@ -59,7 +61,7 @@ final readonly class AuditModels
                 $connection = $model->getConnectionName();
 
                 if ($connection === null || !in_array($connection, $connections, true)) {
-                    $skipped++;
+                    $skipped[] = new Report($scanned->class, ($connection ?? Config::string('database.default')) . '.' . $model->getTable(), []);
 
                     continue;
                 }
@@ -229,7 +231,7 @@ final readonly class AuditModels
      */
     private function manifestIssues(array $connections, array $fixtures, array $views): array
     {
-        $manifest = $this->manifest->load();
+        $manifest = $this->manifest->load()->all();
         $issues = [];
 
         foreach ($connections as $connection) {

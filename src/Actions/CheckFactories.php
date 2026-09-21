@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\Sequence;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Config;
 use Mahbub\SchemaTools\Support\ColumnType;
 use Mahbub\SchemaTools\Support\FactoryCheckResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
@@ -23,7 +24,9 @@ use Throwable;
 /**
  * Checks every model factory on a fixture-backed connection against the DDL.
  * A base definition() must contain exactly the columns an INSERT would be
- * rejected without. Reported per factory:
+ * rejected without. Every checked factory is reported, passing or not, and a
+ * factory whose model is on a connection without a fixture is reported as
+ * skipped. Issues per factory:
  *   1. a required column (NOT NULL, no default, not identity/auto-increment) missing
  *   2. a nullable column present — belongs in a state
  *   3. a NOT NULL column with a database default, or an identity, present — omitting it cannot error
@@ -52,11 +55,8 @@ final readonly class CheckFactories
             $schemas[$connection] = $this->parser->parseTables($this->connections->schemaFile($connection));
         }
 
-        $checked = 0;
         $reports = [];
-
-        /** @var array<string, bool> $skippedConnections */
-        $skippedConnections = [];
+        $skipped = [];
 
         foreach ($this->factories() as $factory) {
             $modelClass = $factory->modelName();
@@ -65,7 +65,7 @@ final readonly class CheckFactories
             $connection = $model->getConnectionName();
 
             if ($connection === null || !in_array($connection, $connections, true)) {
-                $skippedConnections[$connection ?? '(default)'] = true;
+                $skipped[] = new Report($factory::class, ($connection ?? Config::string('database.default')) . '.' . $model->getTable(), []);
 
                 continue;
             }
@@ -75,7 +75,7 @@ final readonly class CheckFactories
 
             $issues = [];
 
-            if (!in_array(strtolower($table), array_map(strtolower(...), $manifest[$connection] ?? []), true)) {
+            if (!in_array(strtolower($table), array_map(strtolower(...), $manifest->names($connection)), true)) {
                 $issues[] = "table `{$table}` is not tracked in the manifest";
             }
 
@@ -85,18 +85,10 @@ final readonly class CheckFactories
                 array_push($issues, ...$this->definitionIssues($factory, $ddl, $connection, $table));
             }
 
-            $checked++;
-
-            if ($issues !== []) {
-                $reports[] = new Report($factory::class, "{$connection}.{$table}", $issues);
-            }
+            $reports[] = new Report($factory::class, "{$connection}.{$table}", $issues);
         }
 
-        return new FactoryCheckResult(
-            factories: $reports,
-            checked: $checked,
-            skippedConnections: array_keys($skippedConnections),
-        );
+        return new FactoryCheckResult(factories: $reports, skipped: $skipped);
     }
 
     /**

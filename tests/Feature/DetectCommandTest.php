@@ -15,37 +15,50 @@ beforeEach(function (): void {
     $this->workspaceFile('tcb-views.sql', 'CREATE VIEW [dbo].[vReport] AS SELECT a.AuditLogId FROM AuditLog a;');
 });
 
-it('writes the reconciled manifest and fails while a stale entry remains', function (): void {
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center', 'GhostTable'], 'tcbpermission' => ['MasterProduct']];");
+it('rebuilds the generated section, reports every change and writes the manifest', function (): void {
+    $this->manifestFile(
+        generated: ['tcb' => ['Center', 'GhostTable'], 'gone' => ['Whatever'], 'tcbpermission' => ['MasterProduct']],
+        manual: ['tcb' => ['press']],
+    );
 
     artisan('schema:detect')
-        ->expectsOutputToContain('[tcb] 6 name(s): 4 added, 1 not currently referenced in code')
+        ->expectsOutputToContain('[tcb] 5 name(s), 1 under manual: 4 added, 1 removed')
         ->expectsOutputToContain('+ AuditLog')
-        ->expectsOutputToContain('? GhostTable (in manifest, not detected in code — remove by hand if unused)')
-        ->expectsOutputToContain('source-tables.php')
-        ->assertExitCode(1);
+        ->expectsOutputToContain('- GhostTable (no longer referenced in code)')
+        ->expectsOutputToContain('~ press (also detected in code; the manual entry is redundant)')
+        ->expectsOutputToContain('[gone] has no fixture any more; its generated names were dropped')
+        ->expectsOutputToContain('Wrote')
+        ->assertExitCode(0);
 
     expect(require $this->workspace . '/source-tables.php')->toBe([
-        'tcb' => ['Center', 'GhostTable', 'AuditLog', 'CenterProduct', 'Ephemeral', 'press'],
-        'tcbpermission' => ['MasterProduct'],
+        'manual' => ['tcb' => ['press']],
+        'generated' => [
+            'tcb' => ['Center', 'AuditLog', 'CenterProduct', 'Ephemeral', 'press'],
+            'tcbpermission' => ['MasterProduct'],
+        ],
     ]);
 })->group('need_review');
 
-it('previews without writing on --dry-run', function (): void {
-    $original = "<?php return ['tcb' => ['Center', 'GhostTable'], 'tcbpermission' => ['MasterProduct']];";
+it('previews without writing on --dry-run and fails while the generated section is out of date', function (): void {
+    $original = "<?php return ['manual' => [], 'generated' => ['tcb' => ['Center', 'GhostTable'], 'tcbpermission' => ['MasterProduct']]];";
     $this->workspaceFile('source-tables.php', $original);
 
     artisan('schema:detect --dry-run')
         ->expectsOutputToContain('Dry run — manifest not written.')
+        ->expectsOutputToContain('The generated section is out of date; run without --dry-run to rewrite it.')
         ->assertExitCode(1);
 
     expect(file_get_contents($this->workspace . '/source-tables.php'))->toBe($original);
 })->group('need_review');
 
-it('succeeds when the manifest has no stale entries', function (): void {
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center'], 'tcbpermission' => ['MasterProduct']];");
+it('succeeds on --dry-run when the generated section is up to date', function (): void {
+    $this->manifestFile(generated: [
+        'tcb' => ['Center', 'AuditLog', 'CenterProduct', 'Ephemeral', 'press'],
+        'tcbpermission' => ['MasterProduct'],
+    ]);
 
-    artisan('schema:detect')
-        ->expectsOutputToContain('Wrote')
+    artisan('schema:detect --dry-run')
+        ->expectsOutputToContain('[tcb] 5 name(s): 0 added, 0 removed')
+        ->expectsOutputToContain('The generated section is up to date.')
         ->assertExitCode(0);
 })->group('need_review');

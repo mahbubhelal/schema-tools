@@ -53,17 +53,29 @@ modular layout is one setting:
 ## The manifest — `source-tables.php`
 
 The manifest is the single source of truth for *which* tables and views the
-project relies on, per connection:
+project relies on, per connection. It has two sections:
 
 ```php
 return [
-    'tcb' => ['Center', 'press', 'vPress'],
-    'sugar' => ['contacts', 'contacts_cstm', 'bhea_orders_cstm'],
+    'manual' => [
+        // raw SQL in the nightly report job
+        'sugar' => ['bhea_orders_cstm'],
+    ],
+    'generated' => [
+        'tcb' => ['Center', 'press', 'vPress'],
+        'sugar' => ['contacts', 'contacts_cstm'],
+    ],
 ];
 ```
 
-It is **seeded** by `schema:detect` and then **hand-curated** — edit it freely.
-`schema:dump` and `schema:audit` read it; neither re-derives the list itself.
+`manual` is yours: list there what `schema:detect` cannot see, and it is kept
+exactly as written, comments included — no command ever touches it. `generated`
+belongs to `schema:detect`, which rebuilds it on every run; do not edit it by hand.
+`schema:dump` and `schema:audit` read both sections together (a name in both
+counts once). A flat legacy manifest (connection => names, no sections) is read
+as `generated` and takes the two-section shape the next time `schema:detect`
+writes — move any hand-added names under `manual` before that run, or they are
+dropped as unreferenced.
 
 ## Commands
 
@@ -85,14 +97,16 @@ Tables are discovered from three places:
 - every base table a committed `<connection>-views.sql` joins, so tables used only
   inside a view still get pulled.
 
-The manifest is treated as the source of truth: existing entries and their order
-are preserved, newly detected names are appended (sorted), and an entry no longer
-found in code is **reported but kept** — never deleted automatically. It exits
-non-zero when a stale entry remains.
+Only the `generated` section is rebuilt: names still detected keep their order,
+newly detected names are appended (sorted), names no longer referenced are
+removed, and a connection without a fixture loses its section. The `manual`
+section is left alone; a manual name the detector finds anyway is flagged as
+redundant. When the file already has a generated block, only that block is
+replaced, so the manual section survives byte for byte.
 
 ```bash
-php artisan schema:detect            # writes the reconciled manifest
-php artisan schema:detect --dry-run  # preview only, writes nothing
+php artisan schema:detect            # rebuilds the generated section and writes the manifest
+php artisan schema:detect --dry-run  # preview only; exits non-zero when generated is out of date
 ```
 
 ### `php artisan schema:dump`
@@ -142,7 +156,9 @@ would be rejected without — a missing required column, a nullable column that
 belongs in a state, a column with a database default (or auto-increment), a value
 whose PHP type does not fit the SQL type, or a key the DDL does not have are all
 reported. Finally it confirms every manifest name exists in a fixture, and every
-fixture object appears in the manifest.
+fixture object appears in the manifest. The report lists every model and factory
+by name — `OK`, `FAIL` with its issues, or `SKIP` for one whose connection has
+no fixture — so nothing goes unmentioned.
 
 ```bash
 php artisan schema:audit

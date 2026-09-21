@@ -10,43 +10,60 @@ use Mahbub\SchemaTools\Support\Manifest;
 
 final class DetectCommand extends Command
 {
-    protected $signature = 'schema:detect {--dry-run : Preview the reconciled manifest without writing it}';
+    protected $signature = 'schema:detect {--dry-run : Preview the reconciled manifest without writing it; exits non-zero when the generated section is out of date}';
 
-    protected $description = 'Detect the source tables and views the code relies on and reconcile them with the manifest';
+    protected $description = 'Detect the source tables and views the code relies on and rebuild the generated section of the manifest';
 
     public function handle(DetectSourceTables $detectSourceTables, Manifest $manifest): int
     {
         $result = $detectSourceTables->handle();
 
         foreach ($result->connections as $connection) {
-            $this->line(
-                "[{$connection->connection}] {$connection->total} name(s): "
-                . count($connection->additions) . ' added, '
-                . count($connection->stale) . ' not currently referenced in code',
-            );
+            $heading = "[{$connection->connection}] {$connection->total} name(s)";
+
+            if ($connection->manualCount > 0) {
+                $heading .= ", {$connection->manualCount} under manual";
+            }
+
+            $this->line($heading . ': ' . count($connection->additions) . ' added, ' . count($connection->removed) . ' removed');
 
             foreach ($connection->additions as $name) {
                 $this->line("    + {$name}");
             }
 
-            foreach ($connection->stale as $name) {
-                $this->line("    ? {$name} (in manifest, not detected in code — remove by hand if unused)");
+            foreach ($connection->removed as $name) {
+                $this->line("    - {$name} (no longer referenced in code)");
+            }
+
+            foreach ($connection->redundantManual as $name) {
+                $this->line("    ~ {$name} (also detected in code; the manual entry is redundant)");
             }
         }
 
+        foreach ($result->droppedConnections as $connection) {
+            $this->line("[{$connection}] has no fixture any more; its generated names were dropped");
+        }
+
+        $this->newLine();
+
         if ($this->option('dry-run') === true) {
-            $this->newLine();
             $this->line('Dry run — manifest not written.');
 
-            return $result->hasStale() ? self::FAILURE : self::SUCCESS;
+            if ($result->hasChanges()) {
+                $this->warn('The generated section is out of date; run without --dry-run to rewrite it.');
+
+                return self::FAILURE;
+            }
+
+            $this->line('The generated section is up to date.');
+
+            return self::SUCCESS;
         }
 
         $manifest->write($result->manifest);
-
-        $this->newLine();
         $this->line('Wrote ' . $this->relative($manifest->path()) . '.');
 
-        return $result->hasStale() ? self::FAILURE : self::SUCCESS;
+        return self::SUCCESS;
     }
 
     private function relative(string $path): string

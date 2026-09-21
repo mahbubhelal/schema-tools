@@ -123,6 +123,12 @@ const FACTORY_SCHEMA = <<<'SQL'
         [Name] nvarchar(50) NOT NULL,
         PRIMARY KEY ([Id])
     );
+
+    CREATE TABLE [dbo].[FPassing] (
+        [Id] int IDENTITY(1,1) NOT NULL,
+        [Name] nvarchar(50) NOT NULL,
+        PRIMARY KEY ([Id])
+    );
     SQL;
 
 /**

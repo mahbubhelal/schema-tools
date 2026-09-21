@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Config;
 use Mahbub\SchemaTools\Actions\AuditModels;
+use Mahbub\SchemaTools\Support\Report;
+use Mahbub\SchemaTools\Tests\Fixtures\Audit\Models\SkippedModel;
 
 it('audits every model against the DDL, flagging each kind of drift', function (): void {
     Config::set('schema-tools.models_path', dirname(__DIR__) . '/Fixtures/Audit/Models');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
-    $this->workspaceFile('source-tables.php', '<?php return ' . var_export(['tcb' => AUDIT_TABLES], true) . ';');
+    $this->manifestFile(['tcb' => AUDIT_TABLES]);
 
     $result = resolve(AuditModels::class)->handle();
 
@@ -32,7 +34,7 @@ it('audits every model against the DDL, flagging each kind of drift', function (
     ]);
 
     expect($result)
-        ->skipped->toBe(1)
+        ->skipped->toEqual([new Report(SkippedModel::class, 'other.Whatever', [])])
         ->manifestIssues->toBe([])
         ->and($result->passes())->toBeFalse();
 })->group('need_review');
@@ -41,7 +43,7 @@ it('reports manifest entries and fixture objects that disagree', function (): vo
     Config::set('schema-tools.models_path', dirname(__DIR__) . '/Fixtures/Empty');
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);\n\nCREATE TABLE [dbo].[Orphan] (\n    [Id] int NOT NULL\n);");
     $this->workspaceFile('tcb-views.sql', 'CREATE VIEW [dbo].[vX] AS SELECT 1 AS one;');
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center', 'vX', 'Ghost']];");
+    $this->manifestFile(['tcb' => ['Center', 'vX', 'Ghost']]);
 
     $result = resolve(AuditModels::class)->handle();
 
@@ -58,7 +60,7 @@ it('audits a view-backed model for the no-key, no-increment, no-timestamps shape
         static fn (string $view): string => "CREATE VIEW [dbo].[{$view}] AS SELECT 1 AS one;",
         ['vOk', 'vKeyed', 'vInc', 'vTs'],
     )));
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center', 'vOk', 'vKeyed', 'vInc', 'vTs']];");
+    $this->manifestFile(['tcb' => ['Center', 'vOk', 'vKeyed', 'vInc', 'vTs']]);
 
     $result = resolve(AuditModels::class)->handle();
 
@@ -73,7 +75,7 @@ it('audits a view-backed model for the no-key, no-increment, no-timestamps shape
 
     expect($result)
         ->manifestIssues->toBe([])
-        ->skipped->toBe(0);
+        ->skipped->toBe([]);
 })->group('need_review');
 
 it('scans every configured models path, including glob patterns', function (): void {
@@ -83,7 +85,7 @@ it('scans every configured models path, including glob patterns', function (): v
     ]);
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
     $this->workspaceFile('tcb-views.sql', 'CREATE VIEW [dbo].[vOk] AS SELECT 1 AS one;');
-    $this->workspaceFile('source-tables.php', '<?php return ' . var_export(['tcb' => [...AUDIT_TABLES, 'vOk']], true) . ';');
+    $this->manifestFile(['tcb' => [...AUDIT_TABLES, 'vOk']]);
 
     $locations = collect(resolve(AuditModels::class)->handle()->models)->pluck('location');
 

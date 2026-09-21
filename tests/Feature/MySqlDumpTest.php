@@ -43,7 +43,7 @@ beforeEach(function (): void {
 
 it('copies a MySQL table and view verbatim, minus the auto-increment counter and the view definer', function (): void {
     $this->workspaceFile('sugar-schema.sql', '');
-    $this->workspaceFile('source-tables.php', "<?php return ['sugar' => ['contacts', 'missing', 'perf_thing', 'vcontacts']];");
+    $this->manifestFile(['sugar' => ['contacts', 'missing', 'perf_thing', 'vcontacts']]);
 
     mysqlResolvesTo($this->connection, 'contacts', (object) ['name' => 'contacts', 'type' => 'BASE TABLE']);
     mysqlResolvesTo($this->connection, 'missing', null);
@@ -68,7 +68,7 @@ it('copies a MySQL table and view verbatim, minus the auto-increment counter and
 
 it('pre-fills the migrations table from the connection\'s squashed migrations directory', function (): void {
     $this->workspaceFile('sugar-schema.sql', '');
-    $this->workspaceFile('source-tables.php', "<?php return ['sugar' => ['contacts']];");
+    $this->manifestFile(['sugar' => ['contacts']]);
     $this->workspaceFile('migrations/2024_01_01_000000_create_contacts.php', '');
     $this->workspaceFile('migrations/2024_02_01_000000_add_seq.php', '');
     $this->workspaceFile('migrations/notes.txt', '');
@@ -90,7 +90,7 @@ it('pre-fills the migrations table from the connection\'s squashed migrations di
 
 it('keeps the existing order of a MySQL fixture and ignores its migrations table', function (): void {
     $this->workspaceFile('sugar-schema.sql', MYSQL_FIXTURE_HEAD . "\n\nSET FOREIGN_KEY_CHECKS=1;\n");
-    $this->workspaceFile('source-tables.php', "<?php return ['sugar' => ['accounts', 'contacts']];");
+    $this->manifestFile(['sugar' => ['accounts', 'contacts']]);
 
     foreach (['accounts', 'contacts'] as $table) {
         mysqlResolvesTo($this->connection, $table, (object) ['name' => $table, 'type' => 'BASE TABLE']);
@@ -106,7 +106,7 @@ it('keeps the existing order of a MySQL fixture and ignores its migrations table
 
 it('leaves the fixtures of :dataset untouched with a warning', function (string $connection, string $driver): void {
     $this->workspaceFile("{$connection}-schema.sql", 'CREATE TABLE `x` (`id` int);');
-    $this->workspaceFile('source-tables.php', "<?php return ['{$connection}' => ['x']];");
+    $this->manifestFile([$connection => ['x']]);
 
     $dump = dumpActionFor($this->connection, $connection)->handle()->connections[0];
 

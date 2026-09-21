@@ -8,6 +8,7 @@ use Mahbub\SchemaTools\Support\ConnectionDetection;
 use Mahbub\SchemaTools\Support\DetectionResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
+use Mahbub\SchemaTools\Support\ManifestData;
 use Mahbub\SchemaTools\Support\ModelScanner;
 use Mahbub\SchemaTools\Support\ScanPaths;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
@@ -29,9 +30,11 @@ use Symfony\Component\Finder\Finder;
  *   - every base table a committed `<connection>-views.sql` joins, so tables
  *     used only inside a view still get pulled
  *
- * The manifest is treated as the source of truth: existing entries and their
- * order are preserved, newly detected names are appended (sorted), and an entry
- * no longer found in code is reported but kept — never deleted automatically.
+ * Only the manifest's `generated` section is reconciled: names still detected
+ * keep their order, newly detected names are appended (sorted), names no longer
+ * found in code are removed, and a connection without a fixture loses its
+ * section. The `manual` section is never touched; a manual name the detector
+ * finds anyway is reported as redundant.
  */
 final readonly class DetectSourceTables
 {
@@ -116,40 +119,55 @@ final readonly class DetectSourceTables
         $canonicalise = static fn (string $name): string => $canonical[strtolower($name)] ?? $name;
 
         $manifest = $this->manifest->load();
-        $summaries = [];
+        $generated = array_intersect_key($manifest->generated, array_fill_keys($connections, true));
+        $droppedConnections = array_values(array_diff(array_keys($manifest->generated), $connections));
+
+        /** @var array<string, array{additions: list<string>, removed: list<string>, redundant: list<string>}> */
+        $changes = [];
 
         foreach ($connections as $connection) {
+            /** @var array<string, string> $detectedNames Lowercase => preferred casing. */
             $detectedNames = [];
 
             foreach ($detected[$connection] as $name) {
                 $detectedNames[strtolower($name)] ??= $canonicalise($name);
             }
 
-            $existing = $manifest[$connection] ?? [];
-            $existingKeys = array_map(strtolower(...), $existing);
+            $isDetected = static fn (string $name): bool => array_key_exists(strtolower($name), $detectedNames);
 
-            $newKeys = array_values(array_diff(array_keys($detectedNames), $existingKeys));
+            $existing = $generated[$connection] ?? [];
+            $kept = array_values(array_filter($existing, $isDetected));
+            $removed = array_values(array_filter($existing, static fn (string $name): bool => !$isDetected($name)));
+
+            $newKeys = array_values(array_diff(array_keys($detectedNames), array_map(strtolower(...), $existing)));
             sort($newKeys);
 
             $additions = array_map(static fn (string $key): string => $detectedNames[$key], $newKeys);
 
-            $staleKeys = array_diff($existingKeys, array_keys($detectedNames));
-            $stale = array_values(array_filter(
-                $existing,
-                static fn (string $name): bool => in_array(strtolower($name), $staleKeys, true),
-            ));
+            $generated[$connection] = [...$kept, ...$additions];
 
-            $manifest[$connection] = [...$existing, ...$additions];
+            $changes[$connection] = [
+                'additions' => $additions,
+                'removed' => $removed,
+                'redundant' => array_values(array_filter($manifest->manual[$connection] ?? [], $isDetected)),
+            ];
+        }
 
+        $reconciled = new ManifestData(manual: $manifest->manual, generated: $generated);
+        $summaries = [];
+
+        foreach ($connections as $connection) {
             $summaries[] = new ConnectionDetection(
                 connection: $connection,
-                total: count($manifest[$connection]),
-                additions: $additions,
-                stale: $stale,
+                total: count($reconciled->names($connection)),
+                manualCount: count($manifest->manual[$connection] ?? []),
+                additions: $changes[$connection]['additions'],
+                removed: $changes[$connection]['removed'],
+                redundantManual: $changes[$connection]['redundant'],
             );
         }
 
-        return new DetectionResult(manifest: $manifest, connections: $summaries);
+        return new DetectionResult(manifest: $reconciled, connections: $summaries, droppedConnections: $droppedConnections);
     }
 
     /**

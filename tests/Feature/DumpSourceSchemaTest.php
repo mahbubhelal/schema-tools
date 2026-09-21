@@ -11,7 +11,7 @@ beforeEach(function (): void {
 
 it('reconstructs a table with every column shape and a primary key', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    $this->manifestFile(['tcb' => ['Center']]);
 
     $collation = 'SQL_Latin1_General_CP1_CI_AS';
 
@@ -63,7 +63,7 @@ it('reconstructs a table with every column shape and a primary key', function ()
 it('reconstructs a table without a primary key alongside a view', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Log] (\n    [Message] nvarchar(10) NOT NULL\n);");
     $this->workspaceFile('tcb-views.sql', 'CREATE VIEW [dbo].[vCenter] AS SELECT 1 AS one;');
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Log', 'vCenter']];");
+    $this->manifestFile(['tcb' => ['Log', 'vCenter']]);
 
     resolvesTo($this->connection, 'Log', (object) ['name' => 'Log', 'type' => 'U ']);
     resolvesTo($this->connection, 'vCenter', (object) ['name' => 'vCenter', 'type' => 'V ']);
@@ -83,7 +83,7 @@ it('reconstructs a table without a primary key alongside a view', function (): v
 
 it('warns and skips names that are missing or the wrong object type', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Missing', 'Proc', 'Center']];");
+    $this->manifestFile(['tcb' => ['Missing', 'Proc', 'Center']]);
 
     resolvesTo($this->connection, 'Missing', null);
     resolvesTo($this->connection, 'Proc', (object) ['name' => 'Proc', 'type' => 'P ']);
@@ -103,7 +103,7 @@ it('warns and skips names that are missing or the wrong object type', function (
 
 it('drops a fixture object that is no longer in the manifest', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);\n\nCREATE TABLE [dbo].[Legacy] (\n    [Id] int NOT NULL\n);");
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    $this->manifestFile(['tcb' => ['Center']]);
 
     resolvesTo($this->connection, 'Center', (object) ['name' => 'Center', 'type' => 'U ']);
     tableColumns($this->connection, 'Center', [col('CenterId', 'int', isIdentity: 1, seed: 1, increment: 1)]);
@@ -118,7 +118,7 @@ it('drops a fixture object that is no longer in the manifest', function (): void
 
 it('preserves the existing fixture order and appends new tables sorted', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Zebra] (\n    [Col] int NOT NULL\n);\n\nCREATE TABLE [dbo].[Center] (\n    [Col] int NOT NULL\n);");
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center', 'Zebra', 'Alpha']];");
+    $this->manifestFile(['tcb' => ['Center', 'Zebra', 'Alpha']]);
 
     foreach (['Center', 'Zebra', 'Alpha'] as $table) {
         resolvesTo($this->connection, $table, (object) ['name' => $table, 'type' => 'U ']);
@@ -150,7 +150,7 @@ it('skips a connection that has no manifest entries', function (): void {
 
 it('leaves the fixtures untouched when a source query fails', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    $this->manifestFile(['tcb' => ['Center']]);
 
     $this->connection->shouldReceive('selectOne')
         ->withArgs(fn (string $sql, array $b): bool => str_contains($sql, 'sys.objects'))
@@ -167,7 +167,7 @@ it('leaves the fixtures untouched when a source query fails', function (): void 
 
 it('normalises Windows line endings in a verbatim view definition', function (): void {
     $this->workspaceFile('tcb-schema.sql', '');
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['vCenter']];");
+    $this->manifestFile(['tcb' => ['vCenter']]);
 
     resolvesTo($this->connection, 'vCenter', (object) ['name' => 'vCenter', 'type' => 'V ']);
     viewDefinition($this->connection, 'vCenter', "CREATE VIEW [dbo].[vCenter]\r\nAS\r\nSELECT 1 AS one\r\n");
@@ -180,7 +180,7 @@ it('normalises Windows line endings in a verbatim view definition', function ():
 it('restricts a run to the requested connections', function (): void {
     $this->workspaceFile('tcb-schema.sql', '');
     $this->workspaceFile('tcbpermission-schema.sql', '');
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center'], 'tcbpermission' => ['MasterProduct']];");
+    $this->manifestFile(['tcb' => ['Center'], 'tcbpermission' => ['MasterProduct']]);
 
     stubCenter($this->connection);
 
@@ -193,7 +193,7 @@ it('restricts a run to the requested connections', function (): void {
 
 it('skips a hand-maintained connection without touching the source', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    $this->manifestFile(['tcb' => ['Center']]);
     Config::set('schema-tools.hand_maintained', ['tcb']);
 
     $dump = dumpActionFor($this->connection)->handle()->connections[0];

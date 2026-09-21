@@ -32,7 +32,7 @@ function stubCenter(Connection $connection): void
 
 it('writes the fixtures and reports each object as changed', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);\n");
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center', 'vCenter']];");
+    $this->manifestFile(['tcb' => ['Center', 'vCenter']]);
 
     stubCenter($this->connection);
     resolvesTo($this->connection, 'vCenter', (object) ['name' => 'vCenter', 'type' => 'V ']);
@@ -53,7 +53,7 @@ it('writes the fixtures and reports each object as changed', function (): void {
 it('previews the diff without writing on --dry-run', function (): void {
     $original = "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);\n";
     $this->workspaceFile('tcb-schema.sql', $original);
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    $this->manifestFile(['tcb' => ['Center']]);
 
     stubCenter($this->connection);
     bindSourceQueries($this->connection);
@@ -68,7 +68,7 @@ it('previews the diff without writing on --dry-run', function (): void {
 
 it('reports a fixture as unchanged when it already matches the source', function (): void {
     $this->workspaceFile('tcb-schema.sql', GENERATED_CENTER);
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    $this->manifestFile(['tcb' => ['Center']]);
 
     stubCenter($this->connection);
     bindSourceQueries($this->connection);
@@ -81,7 +81,7 @@ it('reports a fixture as unchanged when it already matches the source', function
 it('dumps only the connections named with --connection and flags unknown ones', function (): void {
     $this->workspaceFile('tcb-schema.sql', '');
     $this->workspaceFile('tcbpermission-schema.sql', '');
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center'], 'tcbpermission' => ['MasterProduct']];");
+    $this->manifestFile(['tcb' => ['Center'], 'tcbpermission' => ['MasterProduct']]);
 
     stubCenter($this->connection);
     bindSourceQueries($this->connection);
@@ -98,7 +98,7 @@ it('dumps only the connections named with --connection and flags unknown ones', 
 
 it('reports a hand-maintained connection as skipped', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    $this->manifestFile(['tcb' => ['Center']]);
     Config::set('schema-tools.hand_maintained', ['tcb']);
 
     bindSourceQueries($this->connection);
@@ -122,7 +122,7 @@ it('skips a connection with no manifest entries', function (): void {
 it('warns and leaves the fixture untouched when the source fails', function (): void {
     $original = "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);\n";
     $this->workspaceFile('tcb-schema.sql', $original);
-    $this->workspaceFile('source-tables.php', "<?php return ['tcb' => ['Center']];");
+    $this->manifestFile(['tcb' => ['Center']]);
 
     $this->connection->shouldReceive('selectOne')
         ->withArgs(fn (string $sql, array $b): bool => str_contains($sql, 'sys.objects'))

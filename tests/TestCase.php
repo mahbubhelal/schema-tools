@@ -67,6 +67,17 @@ abstract class TestCase extends TestbenchTestCase
     }
 
     /**
+     * Write a manifest into the workspace in its two-section shape.
+     *
+     * @param  array<string, list<string>>  $generated
+     * @param  array<string, list<string>>  $manual
+     */
+    protected function manifestFile(array $generated, array $manual = []): string
+    {
+        return $this->workspaceFile('source-tables.php', '<?php return ' . var_export(['manual' => $manual, 'generated' => $generated], true) . ';');
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function sourceConnection(string $database, string $driver = 'sqlsrv'): array

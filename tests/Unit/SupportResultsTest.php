@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Mahbub\SchemaTools\Support\ConnectionDetection;
 use Mahbub\SchemaTools\Support\DetectionResult;
 use Mahbub\SchemaTools\Support\FactoryCheckResult;
+use Mahbub\SchemaTools\Support\ManifestData;
 use Mahbub\SchemaTools\Support\ModelAuditResult;
 use Mahbub\SchemaTools\Support\Report;
 
@@ -13,38 +14,37 @@ it('reports a passing report as having no issues', function (): void {
         ->and((new Report('App\\Models\\Center', 'tcb.Center', ['pk mismatch']))->passes())->toBeFalse();
 })->group('need_review');
 
-it('detects stale manifest entries only when a connection has some', function (): void {
-    $withStale = new DetectionResult(
-        manifest: [],
-        connections: [new ConnectionDetection('tcb', 3, [], ['Ghost'])],
-    );
+it('reports changes when a name was added or removed or a connection was dropped', function (): void {
+    $manifest = new ManifestData(manual: [], generated: []);
 
-    $withoutStale = new DetectionResult(
-        manifest: [],
-        connections: [new ConnectionDetection('tcb', 3, ['New'], [])],
-    );
+    $added = new DetectionResult($manifest, [new ConnectionDetection('tcb', 3, 0, ['New'], [], [])], []);
+    $removed = new DetectionResult($manifest, [new ConnectionDetection('tcb', 3, 0, [], ['Ghost'], [])], []);
+    $dropped = new DetectionResult($manifest, [], ['gone']);
+    $inSync = new DetectionResult($manifest, [new ConnectionDetection('tcb', 3, 1, [], [], ['Center'])], []);
 
-    expect($withStale->hasStale())->toBeTrue()
-        ->and($withoutStale->hasStale())->toBeFalse();
+    expect($added->hasChanges())->toBeTrue()
+        ->and($removed->hasChanges())->toBeTrue()
+        ->and($dropped->hasChanges())->toBeTrue()
+        ->and($inSync->hasChanges())->toBeFalse();
 })->group('need_review');
 
 it('sums model issues and passes only when clean', function (): void {
     $clean = new ModelAuditResult(
         models: [new Report('A', 'tcb.A', [])],
         manifestIssues: [],
-        skipped: 0,
+        skipped: [new Report('S', 'other.S', [])],
     );
 
     $dirtyModels = new ModelAuditResult(
         models: [new Report('A', 'tcb.A', ['one', 'two'])],
         manifestIssues: [],
-        skipped: 0,
+        skipped: [],
     );
 
     $dirtyManifest = new ModelAuditResult(
         models: [new Report('A', 'tcb.A', [])],
         manifestIssues: ['stale'],
-        skipped: 0,
+        skipped: [],
     );
 
     expect($clean->issueCount())->toBe(0)
@@ -56,12 +56,11 @@ it('sums model issues and passes only when clean', function (): void {
 })->group('need_review');
 
 it('sums factory issues and passes only when clean', function (): void {
-    $clean = new FactoryCheckResult(factories: [], checked: 2, skippedConnections: []);
+    $clean = new FactoryCheckResult(factories: [new Report('F', 'tcb.A', [])], skipped: [new Report('G', 'other.B', [])]);
 
     $dirty = new FactoryCheckResult(
         factories: [new Report('F', 'tcb.A', ['bad', 'worse'])],
-        checked: 2,
-        skippedConnections: [],
+        skipped: [],
     );
 
     expect($clean->issueCount())->toBe(0)

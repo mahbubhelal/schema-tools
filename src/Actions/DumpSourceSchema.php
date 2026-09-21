@@ -53,7 +53,7 @@ final readonly class DumpSourceSchema
                 continue;
             }
 
-            $dumps[] = $this->dumpConnection($connection, $manifest[$connection] ?? []);
+            $dumps[] = $this->dumpConnection($connection, $manifest->names($connection));
         }
 
         return new DumpResult($dumps);

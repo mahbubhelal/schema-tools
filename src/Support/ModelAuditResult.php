@@ -9,12 +9,12 @@ final readonly class ModelAuditResult
     /**
      * @param  list<Report>  $models  One per audited model, passing or not.
      * @param  list<string>  $manifestIssues  Manifest/fixture disagreements.
-     * @param  int  $skipped  Models on non-fixture connections, left unaudited.
+     * @param  list<Report>  $skipped  Models on non-fixture connections, left unaudited.
      */
     public function __construct(
         public array $models,
         public array $manifestIssues,
-        public int $skipped,
+        public array $skipped,
     ) {}
 
     public function issueCount(): int
