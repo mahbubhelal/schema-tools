@@ -9,7 +9,7 @@ use Mahbub\SchemaTools\Tests\Fixtures\CheckFactories\Factories\DefaultConnFactor
 use Mahbub\SchemaTools\Tests\Fixtures\CheckFactoriesMySql\Factories\ContactFactory;
 
 it('checks every factory definition against the DDL and manifest', function (): void {
-    Config::set('schema-tools.factories_path', dirname(__DIR__) . '/Fixtures/CheckFactories/Factories');
+    Config::set('schema-tools.factories_path', __DIR__ . '/../Fixtures/CheckFactories/Factories');
     $this->workspaceFile('tcb-schema.sql', FACTORY_SCHEMA);
     $this->manifestFile(['tcb' => ['FBad', 'FThrower', 'FNoSchemaTable', 'FPassing']]);
 
@@ -52,7 +52,7 @@ it('returns nothing when the factories directory does not exist', function (): v
 
 it('checks a factory against a MySQL fixture, treating auto-increment and defaults as omittable', function (): void {
     Config::set('schema-tools.factories_path', [
-        dirname(__DIR__) . '/Fixtures/CheckFactoriesMySql/Factories',
+        __DIR__ . '/../Fixtures/CheckFactoriesMySql/Factories',
         $this->workspace . '/does-not-exist',
     ]);
     $this->workspaceFile('sugar-schema.sql', <<<'SQL'

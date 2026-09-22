@@ -91,12 +91,77 @@ const AUDIT_SCHEMA = <<<'SQL'
         [KeyedHeapId] int NOT NULL,
         PRIMARY KEY ([KeyedHeapId])
     );
+
+    CREATE TABLE [dbo].[Attributed] (
+        [AttributedId] int IDENTITY(1,1) NOT NULL,
+        PRIMARY KEY ([AttributedId])
+    );
+
+    CREATE TABLE [dbo].[Inherited] (
+        [InheritedId] int NOT NULL,
+        PRIMARY KEY ([InheritedId])
+    );
+
+    CREATE TABLE [dbo].[TableTimestamps] (
+        [id] int IDENTITY(1,1) NOT NULL,
+        PRIMARY KEY ([id])
+    );
+
+    CREATE TABLE [dbo].[TraitConnected] (
+        [Id] int IDENTITY(1,1) NOT NULL,
+        [created_at] datetime NULL,
+        [updated_at] datetime NULL,
+        PRIMARY KEY ([Id])
+    );
+
+    CREATE TABLE [dbo].[MixedStyle] (
+        [MixedStyleId] int IDENTITY(1,1) NOT NULL,
+        PRIMARY KEY ([MixedStyleId])
+    );
+
+    CREATE TABLE [dbo].[Unordered] (
+        [UnorderedId] int NOT NULL,
+        PRIMARY KEY ([UnorderedId])
+    );
+
+    CREATE TABLE [dbo].[TraitTabled] (
+        [TraitTabledId] int IDENTITY(1,1) NOT NULL,
+        [created_at] datetime NULL,
+        [updated_at] datetime NULL,
+        PRIMARY KEY ([TraitTabledId])
+    );
+
+    CREATE TABLE [dbo].[TabledChild] (
+        [Code] varchar(20) NOT NULL,
+        PRIMARY KEY ([Code])
+    );
     SQL;
+
+/**
+ * The namespace and imports every declaration test's class snippet is parsed
+ * under, so attribute names resolve the way they do in a real model file.
+ */
+const MODEL_PRELUDE = <<<'PHP'
+    <?php
+
+    namespace App;
+
+    use Illuminate\Database\Eloquent\Attributes\Connection;
+    use Illuminate\Database\Eloquent\Attributes\Table;
+    use Illuminate\Database\Eloquent\Attributes\Unguarded;
+    use Illuminate\Database\Eloquent\Attributes\WithoutIncrementing;
+    use Illuminate\Database\Eloquent\Attributes\WithoutTimestamps as Ts;
+    use Illuminate\Database\Eloquent\Attributes\WithoutTimestamps;
+    use Illuminate\Database\Eloquent\Factories\HasFactory;
+    use Illuminate\Database\Eloquent\Model;
+
+    PHP;
 
 const AUDIT_TABLES = [
     'Passing', 'Undeclared', 'NoPk', 'Composite', 'PkMismatch',
     'IncMismatch', 'KeyMismatch', 'TimestampsMissing', 'TimestampsUndeclared',
     'Heap', 'HeapIncrementing', 'KeyedHeap',
+    'Attributed', 'Inherited', 'TableTimestamps', 'TraitConnected', 'MixedStyle', 'Unordered', 'TraitTabled', 'TabledChild',
 ];
 
 const FACTORY_SCHEMA = <<<'SQL'

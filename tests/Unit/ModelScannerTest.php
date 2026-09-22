@@ -11,7 +11,7 @@ it('returns an empty list for a directory that does not exist', function (): voi
 })->group('need_review');
 
 it('returns only concrete Eloquent models, skipping everything else', function (): void {
-    $scanned = (new ModelScanner)->scan(dirname(__DIR__) . '/Fixtures/Scanner');
+    $scanned = (new ModelScanner)->scan(__DIR__ . '/../Fixtures/Scanner');
 
     expect($scanned)->toHaveCount(1)
         ->and($scanned[0])->toBeInstanceOf(ScannedModel::class)

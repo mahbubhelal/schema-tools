@@ -84,4 +84,32 @@ return [
 
     'hand_maintained' => [],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Declaration style
+    |--------------------------------------------------------------------------
+    |
+    | How models declare their schema metadata: `attributes` for Eloquent's
+    | class attributes (`#[Connection]`, `#[Table]`, `#[WithoutIncrementing]`,
+    | `#[WithoutTimestamps]`), `properties` for `$connection`, `$table`,
+    | `$primaryKey`, `$keyType`, `$incrementing` and `$timestamps`. Leave it
+    | null to allow either — a model still may not mix the two, and
+    | `schema:audit --fix` then keeps the style each model already leans to.
+    |
+    */
+
+    'declaration_style' => null,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rector binary
+    |--------------------------------------------------------------------------
+    |
+    | The Rector executable `schema:audit --fix` runs the package's
+    | DeclareModelSchemaRector rule with.
+    |
+    */
+
+    'rector_binary' => base_path('vendor/bin/rector'),
+
 ];

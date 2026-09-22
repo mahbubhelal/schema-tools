@@ -10,16 +10,30 @@ use Mahbub\SchemaTools\Actions\AuditModels;
 use Mahbub\SchemaTools\Actions\CheckFactories;
 use Mahbub\SchemaTools\Support\FactoryCheckResult;
 use Mahbub\SchemaTools\Support\ModelAuditResult;
+use Mahbub\SchemaTools\Support\RectorRunner;
 use Mahbub\SchemaTools\Support\Report;
 
 final class AuditCommand extends Command
 {
-    protected $signature = 'schema:audit';
+    protected $signature = 'schema:audit {--fix : Rewrite the model declarations with the bundled Rector rule before auditing}';
 
     protected $description = 'Audit the models and factories against the schema fixtures and manifest';
 
-    public function handle(AuditModels $auditModels, CheckFactories $checkFactories): int
+    public function handle(AuditModels $auditModels, CheckFactories $checkFactories, RectorRunner $rectorRunner): int
     {
+        if ($this->option('fix') === true) {
+            $run = $rectorRunner->fix();
+
+            $this->info('Rector');
+            $this->line($run->output);
+            $this->newLine();
+
+            if (!$run->succeeded()) {
+                $this->error("Rector exited with code {$run->exitCode}; the audit below reflects the models as they are.");
+                $this->newLine();
+            }
+        }
+
         $models = $auditModels->handle();
         $factories = $checkFactories->handle();
 

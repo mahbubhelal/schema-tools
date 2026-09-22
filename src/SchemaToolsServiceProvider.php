@@ -8,6 +8,7 @@ use Illuminate\Support\ServiceProvider;
 use Mahbub\SchemaTools\Commands\AuditCommand;
 use Mahbub\SchemaTools\Commands\DetectCommand;
 use Mahbub\SchemaTools\Commands\DumpCommand;
+use Mahbub\SchemaTools\Support\FixtureModels;
 
 final class SchemaToolsServiceProvider extends ServiceProvider
 {
@@ -15,6 +16,8 @@ final class SchemaToolsServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__ . '/../config/schema-tools.php', 'schema-tools');
+
+        $this->app->singleton(FixtureModels::class);
     }
 
     public function boot(): void

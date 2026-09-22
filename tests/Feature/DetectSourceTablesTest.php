@@ -13,8 +13,8 @@ function detect(): DetectionResult
 }
 
 beforeEach(function (): void {
-    Config::set('schema-tools.models_path', dirname(__DIR__) . '/Fixtures/Detect/Models');
-    Config::set('schema-tools.queries_path', dirname(__DIR__) . '/Fixtures/Detect/Queries');
+    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Detect/Models');
+    Config::set('schema-tools.queries_path', __DIR__ . '/../Fixtures/Detect/Queries');
 
     $this->workspaceFile('tcb-schema.sql', <<<'SQL'
         CREATE TABLE [dbo].[Center] (
@@ -128,8 +128,8 @@ it('reports no changes when the generated section is up to date', function (): v
 })->group('need_review');
 
 it('detects MySQL query tables through a connection property, past comments, backticks, CTEs and derived tables', function (): void {
-    Config::set('schema-tools.models_path', dirname(__DIR__) . '/Fixtures/DetectMySql/Models');
-    Config::set('schema-tools.queries_path', dirname(__DIR__) . '/Fixtures/DetectMySql/Queries');
+    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/DetectMySql/Models');
+    Config::set('schema-tools.queries_path', __DIR__ . '/../Fixtures/DetectMySql/Queries');
     $this->workspaceFile('sugar-schema.sql', "CREATE TABLE `contacts` (\n  `id` int NOT NULL\n) ENGINE=InnoDB;");
     $this->manifestFile(generated: ['sugar' => []]);
 
@@ -140,10 +140,10 @@ it('detects MySQL query tables through a connection property, past comments, bac
 
 it('scans every configured models and queries path, including glob patterns', function (): void {
     Config::set('schema-tools.models_path', [
-        dirname(__DIR__) . '/Fixtures/Detect/Models',
-        dirname(__DIR__) . '/Fixtures/DetectMySql/Models',
+        __DIR__ . '/../Fixtures/Detect/Models',
+        __DIR__ . '/../Fixtures/DetectMySql/Models',
     ]);
-    Config::set('schema-tools.queries_path', dirname(__DIR__) . '/Fixtures/Detect*/Queries');
+    Config::set('schema-tools.queries_path', __DIR__ . '/../Fixtures/Detect*/Queries');
     $this->workspaceFile('sugar-schema.sql', '');
     $this->manifestFile(generated: ['tcb' => [], 'sugar' => []]);
 

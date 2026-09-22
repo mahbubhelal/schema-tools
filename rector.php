@@ -9,6 +9,7 @@ use Rector\Php74\Rector\Property\RestoreDefaultNullToNullableTypePropertyRector;
 use Rector\Set\ValueObject\LevelSetList;
 use Rector\Set\ValueObject\SetList;
 use Rector\TypeDeclaration\Rector\StmtsAwareInterface\DeclareStrictTypesRector;
+use Rector\TypeDeclarationDocblocks\Rector\Class_\AddParamTypeToRefactorMethodRector;
 use RectorLaravel\Set\LaravelLevelSetList;
 use RectorLaravel\Set\LaravelSetList;
 
@@ -22,6 +23,7 @@ return RectorConfig::configure()
         PostIncDecToPreIncDecRector::class,
         RestoreDefaultNullToNullableTypePropertyRector::class,
         RemoveNonExistingVarAnnotationRector::class,
+        AddParamTypeToRefactorMethodRector::class,
     ])
     ->withSets([
         LevelSetList::UP_TO_PHP_83,

@@ -1,8 +1,8 @@
 # Schema Tools
 
-Laravel Artisan commands that keep a project's **schema fixtures**, its **Eloquent
-models**, and its **model factories** in agreement with the live source databases
-— SQL Server and MySQL/MariaDB.
+Laravel Artisan commands and a Rector rule that keep a project's **schema
+fixtures**, its **Eloquent models**, and its **model factories** in agreement with
+the live source databases — SQL Server and MySQL/MariaDB.
 
 It is built for projects that commit a `database/schema/<connection>-schema.sql`
 (and optional `<connection>-views.sql`) fixture per non-default connection —
@@ -20,6 +20,8 @@ for `mysql` and `mariadb`.
 composer require --dev mahbubhelal/schema-tools
 ```
 
+Requires PHP 8.3, Laravel 13 (the Eloquent class attributes the audit understands
+arrived there) and Rector 2, which the package pulls in for `schema:audit --fix`.
 The service provider is auto-discovered. Publish the config if you need to change
 any of the default paths:
 
@@ -40,6 +42,8 @@ php artisan vendor:publish --tag=schema-tools-config
 | `factories_path` | `database_path('factories')` | Where `schema:audit` finds factories. |
 | `squashed_migrations` | `[]` | MySQL only: connection => migrations directory the fixture already contains (see `schema:dump`). |
 | `hand_maintained` | `[]` | Connections whose fixtures are written by hand: audited like any other, never dumped. |
+| `declaration_style` | `null` | `attributes` or `properties` to hold every model to one style; `null` allows either (never mixed within a model). |
+| `rector_binary` | `base_path('vendor/bin/rector')` | The Rector executable `schema:audit --fix` runs. |
 
 Each scan path may be one directory, a glob pattern, or a list of either — so a
 modular layout is one setting:
@@ -140,29 +144,90 @@ php artisan schema:dump --env=staging                   # reads from .env.stagin
 php artisan schema:dump --env=staging --connection=sugar # one connection only
 ```
 
-### `php artisan schema:audit`
+### `php artisan schema:audit [--fix]`
 
 Verifies models and factories against the fixtures, and cross-checks the manifest.
 Exits non-zero when anything is out of sync.
 
 For every concrete model on a fixture-backed connection it checks that the
 `connection`, `table`, `primaryKey`, `keyType`, `incrementing` and `timestamps`
-declarations agree with the DDL. A model may declare no key (`$primaryKey = null`)
-when its table has no primary key. A model mapped onto a view from the views fixture
-has nothing to key on and nothing to time-stamp, so it must declare
-`$primaryKey = null`, `$incrementing = false` and `$timestamps = false`. For every
-factory it checks that `definition()` contains **exactly** the columns an `INSERT`
-would be rejected without — a missing required column, a nullable column that
-belongs in a state, a column with a database default (or auto-increment), a value
-whose PHP type does not fit the SQL type, or a key the DDL does not have are all
-reported. Finally it confirms every manifest name exists in a fixture, and every
-fixture object appears in the manifest. The report lists every model and factory
-by name — `OK`, `FAIL` with its issues, or `SKIP` for one whose connection has
-no fixture — so nothing goes unmentioned.
+declarations agree with the DDL. A declaration may be a property or one of
+Eloquent's class attributes (`#[Connection]`, `#[Table]`, `#[WithoutIncrementing]`,
+`#[WithoutTimestamps]`), on the model itself, on one of its traits or on an
+ancestor. A model may declare no key (`$primaryKey = null`) when its table has no
+primary key. A model mapped onto a view from the views fixture has nothing to key
+on and nothing to time-stamp, so it must declare no key, `$incrementing = false`
+and `$timestamps = false` (or the matching attributes).
+
+It also holds each model's own declarations to a form:
+
+- **One style per model.** A model declares with attributes or with properties,
+  never both. `$primaryKey = null` is the one property an attribute-styled model
+  may keep, since no attribute can say "no key". A `#[Table]` that carries none
+  of the audited arguments (say only `dateFormat`) counts for neither style.
+  Only concrete models are held to this: an abstract base may mix, because a
+  property it declares (`$keyType = 'string'`) reaches every child, while a
+  `#[Table]` it declares is hidden by any child's own `#[Table]` — Eloquent
+  takes the first `#[Table]` it finds and never merges them.
+- **The configured style**, when `declaration_style` fixes one for the project.
+- **Canonical order.** Attributes: `#[Connection]`, `#[Table]`,
+  `#[WithoutIncrementing]`, `#[WithoutTimestamps]` (other attributes may sit
+  anywhere between). Properties: `$connection`, `$table`, `$primaryKey`,
+  `$keyType`, `$incrementing`, `$timestamps` — compared within each visibility
+  group, so a class-element sorter that puts public before protected never
+  fights the audit.
+
+For every factory it checks that `definition()` contains **exactly** the columns
+an `INSERT` would be rejected without — a missing required column, a nullable
+column that belongs in a state, a column with a database default (or
+auto-increment), a value whose PHP type does not fit the SQL type, or a key the
+DDL does not have are all reported. Finally it confirms every manifest name
+exists in a fixture, and every fixture object appears in the manifest. The report
+lists every model and factory by name — `OK`, `FAIL` with its issues, or `SKIP`
+for one whose connection has no fixture — so nothing goes unmentioned.
 
 ```bash
 php artisan schema:audit
+php artisan schema:audit --fix   # rewrite the models first, then audit
 ```
+
+`--fix` runs the project's Rector binary over the model paths with the package's
+own config (`rector-fix.php`), which registers nothing but
+`DeclareModelSchemaRector`, then audits what is left. Rector's cache is cleared
+each run because the rule's outcome depends on the fixtures, which the cache does
+not watch. Run your formatter afterwards — Rector does not restore the blank
+lines between rewritten properties.
+
+### `DeclareModelSchemaRector`
+
+The Rector rule behind `--fix`, usable on its own from the project's `rector.php`
+(`->withRules([DeclareModelSchemaRector::class])`). For every Eloquent model it
+rewrites the class's own declarations so the audit passes:
+
+- values the DDL disagrees with are redeclared (`primaryKey`, `keyType`,
+  `incrementing`, `timestamps`; a view-backed model gets no key, no incrementing,
+  no timestamps);
+- a connection or a disabled timestamps switch declared nowhere in the hierarchy
+  is declared;
+- everything is expressed in one style — the configured `declaration_style`,
+  else the style the class already leans to (attributes win a tie) — in canonical
+  order.
+
+Declarations that need no change keep their nodes, docblocks and `#[\Override]`
+included; other attributes and statements keep their places; a model that already
+passes is left untouched. A model on a connection without a fixture is only
+brought into form; an abstract model is only reordered, its mixed style kept. A
+`#[Table]` the rule adds carries over the arguments of any `#[Table]` the model
+inherits, since its own would shadow them. A composite primary key and a table missing from the fixture are
+reported by the audit but never rewritten.
+
+The rule reads the fixtures and `config/schema-tools.php` through the project's
+Laravel application: inside Artisan it is the running one, inside a bare Rector
+process it is booted from `bootstrap/app.php` under the working directory (or the
+file `SCHEMA_TOOLS_BOOTSTRAP` names). Names the rule introduces are written fully
+qualified; `rector-fix.php` imports them, and so does a formatter with
+`fully_qualified_strict_types` + `import_symbols` when the rule runs from your own
+`rector.php`.
 
 ## Testing
 
