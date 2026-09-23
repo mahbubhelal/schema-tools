@@ -89,16 +89,18 @@ return [
     | Declaration style
     |--------------------------------------------------------------------------
     |
-    | How models declare their schema metadata: `attributes` for Eloquent's
-    | class attributes (`#[Connection]`, `#[Table]`, `#[WithoutIncrementing]`,
-    | `#[WithoutTimestamps]`), `properties` for `$connection`, `$table`,
-    | `$primaryKey`, `$keyType`, `$incrementing` and `$timestamps`. Leave it
-    | null to allow either — a model still may not mix the two, and
-    | `schema:audit --fix` then keeps the style each model already leans to.
+    | How models declare their schema metadata. `attributes`, the default, is
+    | Eloquent's class attributes (`#[Connection]`, `#[Table]`,
+    | `#[WithoutIncrementing]`, `#[WithoutTimestamps]`); `properties` is the
+    | classic properties (`$connection`, `$table`, `$primaryKey`, `$keyType`,
+    | `$incrementing`, `$timestamps`). `schema:audit` enforces the chosen style
+    | and `--fix` rewrites models into it. Set it to null to allow either — a
+    | model still may not mix the two, and `--fix` then keeps the style each
+    | model already leans to.
     |
     */
 
-    'declaration_style' => null,
+    'declaration_style' => 'attributes',
 
     /*
     |--------------------------------------------------------------------------

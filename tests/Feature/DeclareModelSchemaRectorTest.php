@@ -19,6 +19,7 @@ use PhpParser\PrettyPrinter\Standard;
 
 beforeEach(function (): void {
     Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.declaration_style');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
 });
 

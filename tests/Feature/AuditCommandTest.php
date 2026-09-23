@@ -14,6 +14,7 @@ use function Pest\Laravel\artisan;
 it('reports model and factory drift and fails', function (): void {
     Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
     Config::set('schema-tools.factories_path', __DIR__ . '/../Fixtures/CheckFactories/Factories');
+    Config::set('schema-tools.declaration_style');
 
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA . "\n\n" . FACTORY_SCHEMA);
     $this->manifestFile(['tcb' => [...AUDIT_TABLES, 'FPassing']]);

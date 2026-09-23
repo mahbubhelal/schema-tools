@@ -9,6 +9,7 @@ use Mahbub\SchemaTools\Tests\Fixtures\Audit\Models\SkippedModel;
 
 it('audits every model against the DDL, flagging each kind of drift', function (): void {
     Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.declaration_style');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
     $this->manifestFile(['tcb' => AUDIT_TABLES]);
 
@@ -83,6 +84,7 @@ it('reports manifest entries and fixture objects that disagree', function (): vo
 
 it('audits a view-backed model for the no-key, no-increment, no-timestamps shape', function (): void {
     Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Views/Models');
+    Config::set('schema-tools.declaration_style');
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
     $this->workspaceFile('tcb-views.sql', implode("\n\n", array_map(
         static fn (string $view): string => "CREATE VIEW [dbo].[{$view}] AS SELECT 1 AS one;",
