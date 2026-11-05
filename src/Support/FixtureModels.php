@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mahbub\SchemaTools\Support;
 
 use Illuminate\Support\Facades\Config;
+use InvalidArgumentException;
 use Mahbub\SchemaTools\Declarations\DeclarationStyle;
 use Mahbub\SchemaTools\Declarations\ModelFacts;
 use Mahbub\SchemaTools\Declarations\ModelFactsResolver;
@@ -33,10 +34,10 @@ final class FixtureModels
 
     public function __construct(
         private readonly FixtureConnections $fixtureConnections,
-        private readonly SchemaFixtureParser $parser,
+        private readonly SchemaFixtureParser $schemaFixtureParser,
         private readonly ScanPaths $scanPaths,
         private readonly ModelScanner $modelScanner,
-        private readonly ModelFactsResolver $resolver,
+        private readonly ModelFactsResolver $modelFactsResolver,
     ) {}
 
     /**
@@ -48,8 +49,8 @@ final class FixtureModels
             $this->connections = $this->fixtureConnections->all();
 
             foreach ($this->connections as $connection) {
-                $this->tables[$connection] = $this->parser->parseTables($this->fixtureConnections->schemaFile($connection));
-                $this->views[$connection] = $this->parser->parseViews($this->fixtureConnections->viewsFile($connection));
+                $this->tables[$connection] = $this->schemaFixtureParser->parseTables($this->fixtureConnections->schemaFile($connection));
+                $this->views[$connection] = $this->schemaFixtureParser->parseViews($this->fixtureConnections->viewsFile($connection));
             }
         }
 
@@ -84,7 +85,7 @@ final class FixtureModels
         if ($this->scanned === null) {
             $this->scanned = [];
 
-            foreach ($this->scanPaths->resolve('models_path') as $path) {
+            foreach ($this->scanPaths->resolve('models') as $path) {
                 array_push($this->scanned, ...$this->modelScanner->scan($path));
             }
         }
@@ -92,26 +93,26 @@ final class FixtureModels
         return $this->scanned;
     }
 
-    public function facts(ScannedModel $scanned): ?ModelFacts
+    public function facts(ScannedModel $scannedModel): ?ModelFacts
     {
-        if (array_key_exists($scanned->class, $this->facts)) {
-            return $this->facts[$scanned->class];
+        if (array_key_exists($scannedModel->class, $this->facts)) {
+            return $this->facts[$scannedModel->class];
         }
 
-        $connection = $scanned->model->getConnectionName();
+        $connection = $scannedModel->model->getConnectionName();
 
         if ($connection === null || !in_array($connection, $this->connections(), true)) {
-            return $this->facts[$scanned->class] = null;
+            return $this->facts[$scannedModel->class] = null;
         }
 
-        return $this->facts[$scanned->class] = $this->resolver->resolve($scanned, $connection, $this->tables[$connection], $this->views[$connection]);
+        return $this->facts[$scannedModel->class] = $this->modelFactsResolver->resolve($scannedModel, $connection, $this->tables[$connection], $this->views[$connection]);
     }
 
     public function factsFor(string $class): ?ModelFacts
     {
-        foreach ($this->scanned() as $scanned) {
-            if ($scanned->class === $class) {
-                return $this->facts($scanned);
+        foreach ($this->scanned() as $scannedModel) {
+            if ($scannedModel->class === $class) {
+                return $this->facts($scannedModel);
             }
         }
 
@@ -126,6 +127,14 @@ final class FixtureModels
     {
         $configured = Config::get('schema-tools.declaration_style');
 
-        return is_string($configured) ? DeclarationStyle::from($configured) : null;
+        if ($configured === null) {
+            return null;
+        }
+
+        if (!is_string($configured) || !DeclarationStyle::tryFrom($configured) instanceof DeclarationStyle) {
+            throw new InvalidArgumentException("`declaration_style` in schema-tools.php must be 'attributes', 'properties' or null.");
+        }
+
+        return DeclarationStyle::from($configured);
     }
 }

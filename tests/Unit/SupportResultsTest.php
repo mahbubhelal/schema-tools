@@ -10,8 +10,8 @@ use Mahbub\SchemaTools\Support\ModelAuditResult;
 use Mahbub\SchemaTools\Support\Report;
 
 it('reports a passing report as having no issues', function (): void {
-    expect((new Report('App\\Models\\Center', 'tcb.Center', []))->passes())->toBeTrue()
-        ->and((new Report('App\\Models\\Center', 'tcb.Center', ['pk mismatch']))->passes())->toBeFalse();
+    expect(new Report('App\\Models\\Center', 'tcb.Center', [])->passes())->toBeTrue()
+        ->and(new Report('App\\Models\\Center', 'tcb.Center', ['pk mismatch'])->passes())->toBeFalse();
 })->group('need_review');
 
 it('reports changes when a name was added or removed or a connection was dropped', function (): void {

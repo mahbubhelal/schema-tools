@@ -17,11 +17,6 @@ final readonly class Table
         public bool $identityIsKey = true,
     ) {}
 
-    public function hasColumn(string $name): bool
-    {
-        return $this->canonicalName($name) !== null;
-    }
-
     public function column(string $name): ?Column
     {
         $canonical = $this->canonicalName($name);

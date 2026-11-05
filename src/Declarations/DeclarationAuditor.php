@@ -15,45 +15,45 @@ final class DeclarationAuditor
     /**
      * @return list<string>
      */
-    public function issues(OwnDeclarations $declarations, ?DeclarationStyle $configured): array
+    public function issues(OwnDeclarations $ownDeclarations, ?DeclarationStyle $configured): array
     {
         $issues = [];
 
-        if ($declarations->isMixed()) {
+        if ($ownDeclarations->isMixed()) {
             $issues[] = sprintf(
                 'mixes attribute and property declarations: %s vs %s',
-                $this->attributeList($declarations->attributes),
-                $this->propertyList($declarations->stylingProperties()),
+                $this->attributeList($ownDeclarations->attributes),
+                $this->propertyList($ownDeclarations->stylingProperties()),
             );
         } elseif ($configured instanceof DeclarationStyle) {
-            $style = $declarations->style();
+            $style = $ownDeclarations->style();
 
             if ($style instanceof DeclarationStyle && $style !== $configured) {
                 $issues[] = "declares with {$style->value} but `declaration_style` is {$configured->value}";
             }
         }
 
-        $sortedAttributes = $this->sorted($declarations->attributes, OwnDeclarations::ATTRIBUTE_ORDER);
+        $sortedAttributes = $this->sorted($ownDeclarations->attributes, OwnDeclarations::ATTRIBUTE_ORDER);
 
-        if ($sortedAttributes !== $declarations->attributes) {
+        if ($sortedAttributes !== $ownDeclarations->attributes) {
             $issues[] = sprintf(
                 'attributes out of order: %s; expected %s',
-                $this->attributeList($declarations->attributes),
+                $this->attributeList($ownDeclarations->attributes),
                 $this->attributeList($sortedAttributes),
             );
         }
 
-        foreach (['public', 'protected', 'private'] as $visibility) {
+        foreach (Visibility::cases() as $visibility) {
             $group = array_values(array_filter(
-                $declarations->properties,
-                fn (string $property): bool => $declarations->visibilities[$property] === $visibility,
+                $ownDeclarations->properties,
+                fn (string $property): bool => $ownDeclarations->visibilities[$property] === $visibility,
             ));
             $sortedGroup = $this->sorted($group, OwnDeclarations::PROPERTY_ORDER);
 
             if ($sortedGroup !== $group) {
                 $issues[] = sprintf(
                     '%s properties out of order: %s; expected %s',
-                    $visibility,
+                    $visibility->value,
                     $this->propertyList($group),
                     $this->propertyList($sortedGroup),
                 );
@@ -66,6 +66,7 @@ final class DeclarationAuditor
     /**
      * @param  list<string>  $names
      * @param  list<string>  $order
+     *
      * @return list<string>
      */
     private function sorted(array $names, array $order): array

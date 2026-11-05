@@ -7,8 +7,8 @@ use Illuminate\Support\Facades\Config;
 use function Pest\Laravel\artisan;
 
 beforeEach(function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Detect/Models');
-    Config::set('schema-tools.queries_path', __DIR__ . '/../Fixtures/Detect/Queries');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Detect/Models');
+    Config::set('schema-tools.paths.queries', __DIR__ . '/../Fixtures/Detect/Queries');
 
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);\n\nCREATE TABLE [dbo].[press] (\n    [PressId] int NOT NULL\n);\n\nCREATE TABLE [dbo].[AuditLog] (\n    [AuditLogId] int NOT NULL\n);");
     $this->workspaceFile('tcbpermission-schema.sql', "CREATE TABLE [dbo].[MasterProduct] (\n    [Id] int NOT NULL\n);");
@@ -31,16 +31,13 @@ it('rebuilds the generated section, reports every change and writes the manifest
         ->assertExitCode(0);
 
     expect(require $this->workspace . '/source-tables.php')->toBe([
-        'manual' => ['tcb' => ['press']],
-        'generated' => [
-            'tcb' => ['Center', 'AuditLog', 'CenterProduct', 'Ephemeral', 'press'],
-            'tcbpermission' => ['MasterProduct'],
-        ],
+        'tcb' => ['Center', 'AuditLog', 'CenterProduct', 'Ephemeral', 'press'],
+        'tcbpermission' => ['MasterProduct'],
     ]);
 })->group('need_review');
 
 it('previews without writing on --dry-run and fails while the generated section is out of date', function (): void {
-    $original = "<?php return ['manual' => [], 'generated' => ['tcb' => ['Center', 'GhostTable'], 'tcbpermission' => ['MasterProduct']]];";
+    $original = "<?php return ['tcb' => ['Center', 'GhostTable'], 'tcbpermission' => ['MasterProduct']];";
     $this->workspaceFile('source-tables.php', $original);
 
     artisan('schema:detect --dry-run')

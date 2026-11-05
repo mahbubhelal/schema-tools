@@ -14,6 +14,7 @@ use Mahbub\SchemaTools\Support\ModelAuditResult;
 use Mahbub\SchemaTools\Support\Report;
 use Mahbub\SchemaTools\Support\SourceParser;
 use Mahbub\SchemaTools\Support\Table;
+use PhpParser\Node\Stmt\Class_;
 
 /**
  * Verifies every concrete Eloquent model on a fixture-backed connection: its
@@ -28,7 +29,7 @@ use Mahbub\SchemaTools\Support\Table;
 final readonly class AuditModels
 {
     public function __construct(
-        private FixtureModels $models,
+        private FixtureModels $fixtureModels,
         private Manifest $manifest,
         private SourceParser $sourceParser,
         private DeclarationReader $declarationReader,
@@ -39,31 +40,31 @@ final readonly class AuditModels
     {
         $reports = [];
         $skipped = [];
-        $configured = $this->models->configuredStyle();
+        $configured = $this->fixtureModels->configuredStyle();
 
-        foreach ($this->models->scanned() as $scanned) {
-            $facts = $this->models->facts($scanned);
+        foreach ($this->fixtureModels->scanned() as $scannedModel) {
+            $modelFacts = $this->fixtureModels->facts($scannedModel);
 
-            if (!$facts instanceof ModelFacts) {
-                $connection = $scanned->model->getConnectionName() ?? Config::string('database.default');
-                $skipped[] = new Report($scanned->class, $connection . '.' . $scanned->model->getTable(), []);
+            if (!$modelFacts instanceof ModelFacts) {
+                $connection = $scannedModel->model->getConnectionName() ?? Config::string('database.default');
+                $skipped[] = new Report($scannedModel->class, $connection . '.' . $scannedModel->model->getTable(), []);
 
                 continue;
             }
 
-            $issues = $facts->issues;
-            $class = $this->sourceParser->findClass($scanned->contents, $scanned->class);
+            $issues = $modelFacts->issues;
+            $class = $this->sourceParser->findClass($scannedModel->contents, $scannedModel->class);
 
-            if ($class instanceof \PhpParser\Node\Stmt\Class_) {
+            if ($class instanceof Class_) {
                 array_push($issues, ...$this->declarationAuditor->issues($this->declarationReader->read($class), $configured));
             }
 
-            $reports[] = new Report($scanned->class, "{$facts->effective->connection}.{$facts->effective->table}", $issues);
+            $reports[] = new Report($scannedModel->class, "{$modelFacts->effective->connection}.{$modelFacts->effective->table}", $issues);
         }
 
         return new ModelAuditResult(
             models: $reports,
-            manifestIssues: $this->manifestIssues($this->models->connections(), $this->models->tables(), $this->models->views()),
+            manifestIssues: $this->manifestIssues($this->fixtureModels->connections(), $this->fixtureModels->tables(), $this->fixtureModels->views()),
             skipped: $skipped,
         );
     }
@@ -72,15 +73,16 @@ final readonly class AuditModels
      * @param  list<string>  $connections
      * @param  array<string, array<string, Table>>  $fixtures
      * @param  array<string, list<string>>  $views
+     *
      * @return list<string>
      */
     private function manifestIssues(array $connections, array $fixtures, array $views): array
     {
-        $manifest = $this->manifest->load()->all();
+        $namesPerConnection = $this->manifest->load()->all();
         $issues = [];
 
         foreach ($connections as $connection) {
-            $listed = $manifest[$connection] ?? [];
+            $listed = $namesPerConnection[$connection] ?? [];
             $listedKeys = array_map(strtolower(...), $listed);
 
             $defined = [...array_keys($fixtures[$connection]), ...$views[$connection]];

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Support;
 
-use Illuminate\Support\Facades\Config;
 use RuntimeException;
 use Symfony\Component\Process\Process;
 
@@ -22,13 +21,13 @@ final readonly class RectorRunner
 
     public function fix(): RectorRun
     {
-        $binary = Config::string('schema-tools.rector_binary');
+        $binary = base_path('vendor/bin/rector');
 
         if (!is_file($binary)) {
-            throw new RuntimeException("Rector binary `{$binary}` not found; install rector/rector or set `schema-tools.rector_binary`.");
+            throw new RuntimeException("Rector binary `{$binary}` not found; install rector/rector.");
         }
 
-        $paths = $this->scanPaths->resolve('models_path');
+        $paths = $this->scanPaths->resolve('models');
 
         if ($paths === []) {
             return new RectorRun(0, 'No model paths to fix.');
@@ -37,7 +36,6 @@ final readonly class RectorRunner
         $process = new Process(
             command: [PHP_BINARY, $binary, 'process', ...$paths, '--config', self::configFile(), '--clear-cache', '--no-progress-bar'],
             cwd: base_path(),
-            env: ['SCHEMA_TOOLS_BOOTSTRAP' => base_path('bootstrap/app.php')],
             timeout: null,
         );
         $process->run();

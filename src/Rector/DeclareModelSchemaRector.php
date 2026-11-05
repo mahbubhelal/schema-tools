@@ -11,7 +11,6 @@ use Mahbub\SchemaTools\Support\FixtureModels;
 use PhpParser\Node;
 use PhpParser\Node\Stmt\Class_;
 use Rector\Rector\AbstractRector;
-use Throwable;
 
 /**
  * Rewrites every Eloquent model so `schema:audit` passes: values the DDL
@@ -20,14 +19,14 @@ use Throwable;
  * model on a fixture-backed connection is fixed against its DDL; a concrete
  * model on a connection without a fixture is only brought into form; an
  * abstract model is only reordered, since it may mix styles. The rule reads
- * the fixtures and `config/schema-tools.php` through the project's Laravel
+ * the fixtures and `schema-tools.php` through the project's Laravel
  * application, booted from `bootstrap/app.php` when Rector runs on its own.
  */
 final class DeclareModelSchemaRector extends AbstractRector
 {
     public function __construct(
-        private readonly DeclarationRewriter $rewriter,
-        private readonly ApplicationResolver $applications,
+        private readonly DeclarationRewriter $declarationRewriter,
+        private readonly ApplicationResolver $applicationResolver,
     ) {}
 
     /**
@@ -46,25 +45,16 @@ final class DeclareModelSchemaRector extends AbstractRector
 
         $class = $node->namespacedName->toString();
 
-        if (!$this->isModel($class)) {
+        if (!is_subclass_of($class, Model::class)) {
             return null;
         }
 
         if ($node->isAbstract()) {
-            return $this->rewriter->reorder($node) ? $node : null;
+            return $this->declarationRewriter->reorder($node) ? $node : null;
         }
 
-        $models = $this->applications->resolve()->make(FixtureModels::class);
+        $fixtureModels = $this->applicationResolver->resolve()->make(FixtureModels::class);
 
-        return $this->rewriter->rewrite($node, $models->factsFor($class), $models->configuredStyle()) ? $node : null;
-    }
-
-    private function isModel(string $class): bool
-    {
-        try {
-            return is_subclass_of($class, Model::class);
-        } catch (Throwable) {
-            return false;
-        }
+        return $this->declarationRewriter->rewrite($node, $fixtureModels->factsFor($class), $fixtureModels->configuredStyle()) ? $node : null;
     }
 }

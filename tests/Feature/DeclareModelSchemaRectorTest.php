@@ -18,7 +18,7 @@ use PhpParser\Node\Stmt\Nop;
 use PhpParser\PrettyPrinter\Standard;
 
 beforeEach(function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Audit/Models');
     Config::set('schema-tools.declaration_style');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
 });
@@ -28,9 +28,10 @@ beforeEach(function (): void {
  */
 function classNodeOf(string $class): Class_
 {
-    $file = (new ReflectionClass($class))->getFileName();
+    $file = new ReflectionClass($class)->getFileName();
 
-    return (new SourceParser)->findClass(file_get_contents($file), $class);
+    return (new SourceParser)->findClass(file_get_contents($file), $class)
+        ?? throw new LogicException("{$class} has no class declaration.");
 }
 
 function refactored(Node $node): ?string
@@ -98,7 +99,16 @@ it('leaves alone: :dataset', function (Node $node): void {
     'a model that passes' => fn (): Class_ => classNodeOf(Passing::class),
     'an abstract model in form' => fn (): Class_ => classNodeOf(AttributedBase::class),
     'a class that is no model' => fn (): Class_ => classNodeOf(Report::class),
-    'a class that cannot be loaded' => fn (): ?\PhpParser\Node\Stmt\Class_ => (new SourceParser)->findClass("<?php\nnamespace Mahbub\\SchemaTools\\Tests\\Fixtures\\Rector;\nclass Broken {}", 'Mahbub\\SchemaTools\\Tests\\Fixtures\\Rector\\Broken'),
     'a class without a resolved name' => fn (): Class_ => new Class_('Anonymous'),
     'a node that is no class' => fn (): Nop => new Nop,
 ]);
+
+it('fails on a class that cannot be loaded', function (): void {
+    $broken = (new SourceParser)->findClass(
+        "<?php\nnamespace Mahbub\\SchemaTools\\Tests\\Fixtures\\Rector;\nclass Broken {}",
+        'Mahbub\\SchemaTools\\Tests\\Fixtures\\Rector\\Broken',
+    ) ?? throw new LogicException('Broken has no class declaration.');
+
+    expect(fn (): ?string => refactored($broken))
+        ->toThrow(RuntimeException::class, 'This file fails to load, so the class cannot be checked.');
+})->group('need_review');

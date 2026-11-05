@@ -26,7 +26,7 @@ use Illuminate\Database\DatabaseManager;
  */
 final readonly class FetchTableColumns
 {
-    public function __construct(private DatabaseManager $database) {}
+    public function __construct(private DatabaseManager $databaseManager) {}
 
     /**
      * @return list<TableColumnRow>
@@ -34,7 +34,7 @@ final readonly class FetchTableColumns
     public function execute(string $connection, string $table): array
     {
         /** @var list<TableColumnRow> */
-        return $this->database->connection($connection)->select(
+        return $this->databaseManager->connection($connection)->select(
             <<<'SQL'
                 SELECT c.name AS name,
                        t.name AS type_name,

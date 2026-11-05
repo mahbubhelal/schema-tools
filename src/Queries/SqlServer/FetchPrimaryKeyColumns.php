@@ -12,7 +12,7 @@ use Illuminate\Database\DatabaseManager;
  */
 final readonly class FetchPrimaryKeyColumns
 {
-    public function __construct(private DatabaseManager $database) {}
+    public function __construct(private DatabaseManager $databaseManager) {}
 
     /**
      * @return list<object{name: string}>
@@ -20,7 +20,7 @@ final readonly class FetchPrimaryKeyColumns
     public function execute(string $connection, string $table): array
     {
         /** @var list<object{name: string}> */
-        return $this->database->connection($connection)->select(
+        return $this->databaseManager->connection($connection)->select(
             <<<'SQL'
                 SELECT col.name AS name
                 FROM sys.key_constraints kc

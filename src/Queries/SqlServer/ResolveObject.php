@@ -12,7 +12,7 @@ use Illuminate\Database\DatabaseManager;
  */
 final readonly class ResolveObject
 {
-    public function __construct(private DatabaseManager $database) {}
+    public function __construct(private DatabaseManager $databaseManager) {}
 
     /**
      * @return object{name: string, type: string}|null
@@ -20,7 +20,7 @@ final readonly class ResolveObject
     public function execute(string $connection, string $name): ?object
     {
         /** @var object{name: string, type: string}|null */
-        return $this->database->connection($connection)->selectOne(
+        return $this->databaseManager->connection($connection)->selectOne(
             'SELECT o.name AS name, o.type AS type FROM sys.objects o WHERE o.object_id = OBJECT_ID(?)',
             ['dbo.' . $name],
         );

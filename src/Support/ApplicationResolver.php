@@ -12,9 +12,8 @@ use RuntimeException;
 /**
  * The Laravel application the Rector rule reads its config and fixtures
  * through. Inside Artisan or a test it is the one already bound; inside a bare
- * Rector process it is booted from the project's `bootstrap/app.php` — the
- * file `SCHEMA_TOOLS_BOOTSTRAP` names, else the one under the working
- * directory.
+ * Rector process it is booted from the `bootstrap/app.php` under the
+ * working directory, the project root.
  */
 final class ApplicationResolver
 {
@@ -32,11 +31,10 @@ final class ApplicationResolver
             return $this->application = $bound;
         }
 
-        $bootstrap = getenv('SCHEMA_TOOLS_BOOTSTRAP');
-        $bootstrap = is_string($bootstrap) && $bootstrap !== '' ? $bootstrap : getcwd() . '/bootstrap/app.php';
+        $bootstrap = getcwd() . '/bootstrap/app.php';
 
         if (!is_file($bootstrap)) {
-            throw new RuntimeException("Cannot boot Laravel: `{$bootstrap}` does not exist. Run Rector from the project root or set SCHEMA_TOOLS_BOOTSTRAP.");
+            throw new RuntimeException("Cannot boot Laravel: `{$bootstrap}` does not exist. Run Rector from the project root.");
         }
 
         $application = require $bootstrap;

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Support;
 
+use PhpParser\Node;
 use PhpParser\Node\Stmt;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\NodeFinder;
@@ -21,12 +22,12 @@ final readonly class SourceParser
 {
     private Parser $parser;
 
-    private NodeTraverser $traverser;
+    private NodeTraverser $nodeTraverser;
 
     public function __construct()
     {
         $this->parser = (new ParserFactory)->createForNewestSupportedVersion();
-        $this->traverser = new NodeTraverser(new NameResolver(null, ['preserveOriginalNames' => true, 'replaceNodes' => false]));
+        $this->nodeTraverser = new NodeTraverser(new NameResolver(null, ['preserveOriginalNames' => true, 'replaceNodes' => false]));
     }
 
     /**
@@ -35,7 +36,7 @@ final readonly class SourceParser
     public function parse(string $code): array
     {
         /** @var list<Stmt> */
-        $statements = $this->traverser->traverse($this->parser->parse($code) ?? []);
+        $statements = $this->nodeTraverser->traverse($this->parser->parse($code) ?? []);
 
         return $statements;
     }
@@ -48,7 +49,7 @@ final readonly class SourceParser
     {
         $node = (new NodeFinder)->findFirst(
             $this->parse($code),
-            static fn ($node): bool => $node instanceof Class_ && $node->namespacedName?->toString() === $class,
+            static fn (Node $node): bool => $node instanceof Class_ && $node->namespacedName?->toString() === $class,
         );
 
         return $node instanceof Class_ ? $node : null;

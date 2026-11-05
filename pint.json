@@ -4,7 +4,10 @@
         "concat_space": {
             "spacing": "one"
         },
-        "fully_qualified_strict_types": true,
+        "fully_qualified_strict_types": {
+            "import_symbols": true,
+            "phpdoc_tags": []
+        },
         "method_argument_space": {
             "on_multiline": "ensure_fully_multiline"
         },
@@ -29,6 +32,16 @@
         "phpdoc_line_span": {
             "const": "single",
             "property": "single"
+        },
+        "phpdoc_separation": {
+            "groups": [
+                ["deprecated", "link", "see", "since"],
+                ["author", "copyright", "license"],
+                ["category", "package", "subpackage"],
+                ["property", "property-read", "property-write"],
+                ["param"],
+                ["return"]
+            ]
         },
 
         "final_class": true

@@ -12,7 +12,7 @@ use Mahbub\SchemaTools\Tests\Fixtures\Audit\Models\TabledChild;
 use Mahbub\SchemaTools\Tests\Fixtures\Audit\Models\TraitTabled;
 
 beforeEach(function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Audit/Models');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
 });
 
@@ -55,4 +55,14 @@ it('reads the configured declaration style: :dataset', function (?string $config
     'attributes' => ['attributes', DeclarationStyle::Attributes],
     'properties' => ['properties', DeclarationStyle::Properties],
     'either' => [null, null],
+]);
+
+it('rejects a declaration_style of :dataset', function (mixed $configured): void {
+    Config::set('schema-tools.declaration_style', $configured);
+
+    expect(fn (): ?DeclarationStyle => resolve(FixtureModels::class)->configuredStyle())
+        ->toThrow(InvalidArgumentException::class, "`declaration_style` in schema-tools.php must be 'attributes', 'properties' or null.");
+})->group('need_review')->with([
+    'an unknown style' => ['mixed'],
+    'a value that is not a string' => [true],
 ]);

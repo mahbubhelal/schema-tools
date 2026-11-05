@@ -4,14 +4,16 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Tests;
 
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\File;
 use Mahbub\SchemaTools\SchemaToolsServiceProvider;
 use Orchestra\Testbench\TestCase as TestbenchTestCase;
 
 abstract class TestCase extends TestbenchTestCase
 {
     /**
-     * A throwaway directory that every test may write schema fixtures and a
-     * manifest into; `schema-tools.schema_path` and `manifest_path` point here.
+     * A throwaway directory that every test may write schema fixtures and the
+     * generated manifest into; `schema-tools.paths.schema` points here.
      */
     protected string $workspace;
 
@@ -41,11 +43,12 @@ abstract class TestCase extends TestbenchTestCase
         $app['config']->set('database.connections.sugar', $this->sourceConnection('sugar', 'mysql'));
         $app['config']->set('database.connections.legacy', $this->sourceConnection('legacy', 'pgsql'));
 
-        $app['config']->set('schema-tools.schema_path', $this->workspace);
-        $app['config']->set('schema-tools.manifest_path', $this->workspace . '/source-tables.php');
-        $app['config']->set('schema-tools.models_path', __DIR__ . '/Fixtures/Empty');
-        $app['config']->set('schema-tools.queries_path', __DIR__ . '/Fixtures/Empty');
-        $app['config']->set('schema-tools.factories_path', __DIR__ . '/Fixtures/Empty');
+        $app['config']->set('schema-tools.paths', [
+            'schema' => $this->workspace,
+            'models' => __DIR__ . '/Fixtures/Empty',
+            'queries' => __DIR__ . '/Fixtures/Empty',
+            'factories' => __DIR__ . '/Fixtures/Empty',
+        ]);
     }
 
     /**
@@ -67,14 +70,35 @@ abstract class TestCase extends TestbenchTestCase
     }
 
     /**
-     * Write a manifest into the workspace in its two-section shape.
+     * Make the workspace the project root and install a stand-in Rector binary
+     * there that echoes its arguments and working directory, then exits with the
+     * given code.
+     */
+    protected function fakeRector(int $exitCode = 0): void
+    {
+        $this->workspaceFile('vendor/bin/rector', <<<PHP
+            <?php
+            echo implode(' ', array_slice(\$argv, 1)), "\\n", 'cwd=', getcwd();
+            exit({$exitCode});
+            PHP);
+
+        app()->setBasePath($this->workspace);
+    }
+
+    /**
+     * Write the generated manifest into the workspace and list the manual names
+     * as each connection's `sources`.
      *
      * @param  array<string, list<string>>  $generated
      * @param  array<string, list<string>>  $manual
      */
     protected function manifestFile(array $generated, array $manual = []): string
     {
-        return $this->workspaceFile('source-tables.php', '<?php return ' . var_export(['manual' => $manual, 'generated' => $generated], true) . ';');
+        foreach ($manual as $connection => $sources) {
+            Config::set("schema-tools.connections.{$connection}.sources", $sources);
+        }
+
+        return $this->workspaceFile('source-tables.php', '<?php return ' . var_export($generated, true) . ';');
     }
 
     /**
@@ -100,7 +124,9 @@ abstract class TestCase extends TestbenchTestCase
             return;
         }
 
-        foreach (scandir($directory) ?: [] as $entry) {
+        $entries = scandir($directory);
+
+        foreach ($entries === false ? [] : $entries as $entry) {
             if ($entry === '.' || $entry === '..') {
                 continue;
             }
@@ -110,7 +136,7 @@ abstract class TestCase extends TestbenchTestCase
             if (is_dir($path)) {
                 $this->deleteDirectory($path);
             } else {
-                unlink($path);
+                File::delete($path);
             }
         }
 

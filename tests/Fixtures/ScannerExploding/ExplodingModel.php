@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Mahbub\SchemaTools\Tests\Fixtures\Scanner;
+namespace Mahbub\SchemaTools\Tests\Fixtures\ScannerExploding;
 
 use Illuminate\Database\Eloquent\Model;
 use RuntimeException;

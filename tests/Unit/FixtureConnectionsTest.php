@@ -14,7 +14,7 @@ it('derives the schema and views paths from the configured directory', function 
 })->group('need_review');
 
 it('discovers no connections when the schema directory is empty', function (): void {
-    expect((new FixtureConnections)->all())->toBe([]);
+    expect((new FixtureConnections)->all())->toBeEmpty();
 })->group('need_review');
 
 it('discovers a connection for every schema fixture file', function (): void {

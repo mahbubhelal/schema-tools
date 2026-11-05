@@ -8,7 +8,7 @@ use Mahbub\SchemaTools\Support\Report;
 use Mahbub\SchemaTools\Tests\Fixtures\Audit\Models\SkippedModel;
 
 it('audits every model against the DDL, flagging each kind of drift', function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Audit/Models');
     Config::set('schema-tools.declaration_style');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
     $this->manifestFile(['tcb' => AUDIT_TABLES]);
@@ -52,7 +52,7 @@ it('audits every model against the DDL, flagging each kind of drift', function (
 })->group('need_review');
 
 it('holds every model to the configured declaration style', function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Audit/Models');
     Config::set('schema-tools.declaration_style', 'properties');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
     $this->manifestFile(['tcb' => AUDIT_TABLES]);
@@ -64,12 +64,12 @@ it('holds every model to the configured declaration style', function (): void {
     expect($issues->all())
         ->{'tcb.Attributed'}->toBe(['declares with attributes but `declaration_style` is properties'])
         ->{'tcb.TableTimestamps'}->toBe(['declares with attributes but `declaration_style` is properties'])
-        ->{'tcb.Passing'}->toBe([])
+        ->{'tcb.Passing'}->toBeEmpty()
         ->{'tcb.MixedStyle'}->toBe(['mixes attribute and property declarations: #[WithoutTimestamps] vs $connection, $table, $primaryKey']);
 })->group('need_review');
 
 it('reports manifest entries and fixture objects that disagree', function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Empty');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Empty');
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);\n\nCREATE TABLE [dbo].[Orphan] (\n    [Id] int NOT NULL\n);");
     $this->workspaceFile('tcb-views.sql', 'CREATE VIEW [dbo].[vX] AS SELECT 1 AS one;');
     $this->manifestFile(['tcb' => ['Center', 'vX', 'Ghost']]);
@@ -83,7 +83,7 @@ it('reports manifest entries and fixture objects that disagree', function (): vo
 })->group('need_review');
 
 it('audits a view-backed model for the no-key, no-increment, no-timestamps shape', function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Views/Models');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Views/Models');
     Config::set('schema-tools.declaration_style');
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
     $this->workspaceFile('tcb-views.sql', implode("\n\n", array_map(
@@ -109,7 +109,7 @@ it('audits a view-backed model for the no-key, no-increment, no-timestamps shape
 })->group('need_review');
 
 it('scans every configured models path, including glob patterns', function (): void {
-    Config::set('schema-tools.models_path', [
+    Config::set('schema-tools.paths.models', [
         __DIR__ . '/../Fixtures/Audit/Models',
         __DIR__ . '/../Fixtures/Vie*/Models',
     ]);

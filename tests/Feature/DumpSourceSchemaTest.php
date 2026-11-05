@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\Config;
+use Mahbub\SchemaTools\Support\DumpStatus;
 
 beforeEach(function (): void {
     $this->connection = Mockery::mock(Connection::class);
@@ -56,8 +57,7 @@ it('reconstructs a table with every column shape and a primary key', function ()
         ->tableCount->toBe(1)
         ->viewCount->toBe(0)
         ->warnings->toBe([])
-        ->failed->toBeFalse()
-        ->skipped->toBeFalse();
+        ->status->toBe(DumpStatus::Dumped);
 })->group('need_review');
 
 it('reconstructs a table without a primary key alongside a view', function (): void {
@@ -141,7 +141,7 @@ it('skips a connection that has no manifest entries', function (): void {
     $dump = dumpActionFor($this->connection)->handle()->connections[0];
 
     expect($dump)
-        ->skipped->toBeTrue()
+        ->status->toBe(DumpStatus::Skipped)
         ->schemaContent->toBeNull()
         ->viewsContent->toBeNull()
         ->tableCount->toBe(0)
@@ -159,7 +159,7 @@ it('leaves the fixtures untouched when a source query fails', function (): void 
     $dump = dumpActionFor($this->connection)->handle()->connections[0];
 
     expect($dump)
-        ->failed->toBeTrue()
+        ->status->toBe(DumpStatus::Failed)
         ->warnings->toBe(['source query failed (source down), fixtures left untouched'])
         ->schemaContent->toBeNull()
         ->tableCount->toBe(0);
@@ -187,19 +187,20 @@ it('restricts a run to the requested connections', function (): void {
     $connections = dumpActionFor($this->connection)->handle(['tcb'])->connections;
 
     expect($connections)->toHaveCount(1)
-        ->and($connections[0]->connection)->toBe('tcb')
-        ->and($connections[0]->tableCount)->toBe(1);
+        ->{0}->scoped(fn ($connectionDump) => $connectionDump
+        ->connection->toBe('tcb')
+        ->tableCount->toBe(1));
 })->group('need_review');
 
 it('skips a hand-maintained connection without touching the source', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
     $this->manifestFile(['tcb' => ['Center']]);
-    Config::set('schema-tools.hand_maintained', ['tcb']);
+    Config::set('schema-tools.connections.tcb.hand_maintained', true);
 
     $dump = dumpActionFor($this->connection)->handle()->connections[0];
 
     expect($dump)
-        ->skipped->toBeTrue()
+        ->status->toBe(DumpStatus::Skipped)
         ->skipReason->toBe('fixtures are maintained by hand')
         ->schemaContent->toBeNull()
         ->warnings->toBe([]);

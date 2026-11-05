@@ -26,12 +26,6 @@ final readonly class DetectionResult
             return true;
         }
 
-        foreach ($this->connections as $connection) {
-            if ($connection->additions !== [] || $connection->removed !== []) {
-                return true;
-            }
-        }
-
-        return false;
+        return array_any($this->connections, fn (ConnectionDetection $connection): bool => $connection->additions !== [] || $connection->removed !== []);
     }
 }

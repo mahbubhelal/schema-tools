@@ -27,10 +27,10 @@ final class ModelFactsResolver
      * @param  array<string, Table>  $tables
      * @param  list<string>  $views
      */
-    public function resolve(ScannedModel $scanned, string $connection, array $tables, array $views): ModelFacts
+    public function resolve(ScannedModel $scannedModel, string $connection, array $tables, array $views): ModelFacts
     {
-        $model = $scanned->model;
-        $reflection = $scanned->reflection;
+        $model = $scannedModel->model;
+        $reflection = $scannedModel->reflection;
         $table = $model->getTable();
         $keyName = $this->keyName($reflection, $model);
 
@@ -62,38 +62,38 @@ final class ModelFactsResolver
             return new ModelFacts($effective, null, [...$issues, "table `{$table}` not found in {$connection}-schema.sql"], $inheritedTable);
         }
 
-        $pk = $ddl->effectivePrimaryKey();
+        $ddlPrimaryKey = $ddl->effectivePrimaryKey();
         $expectedKey = $keyName;
         $expectedKeyType = null;
         $expectedIncrementing = $effective->incrementing;
 
         if ($keyName === null) {
-            if (count($pk) === 1) {
-                $issues[] = "model declares no pk but DDL has pk `{$pk[0]}`";
+            if (count($ddlPrimaryKey) === 1) {
+                $issues[] = "model declares no pk but DDL has pk `{$ddlPrimaryKey[0]}`";
             }
 
             if ($effective->incrementing) {
                 $issues[] = 'model has no pk but incrementing is true';
                 $expectedIncrementing = false;
             }
-        } elseif (count($pk) === 0) {
+        } elseif (count($ddlPrimaryKey) === 0) {
             $issues[] = "DDL has NO primary key but model declares `{$keyName}`";
             $expectedKey = null;
             $expectedIncrementing = false;
-        } elseif (count($pk) > 1) {
-            $issues[] = 'DDL has COMPOSITE pk (' . implode(', ', $pk) . "); model getKeyName()=`{$keyName}`";
+        } elseif (count($ddlPrimaryKey) > 1) {
+            $issues[] = 'DDL has COMPOSITE pk (' . implode(', ', $ddlPrimaryKey) . "); model getKeyName()=`{$keyName}`";
         }
 
-        if (count($pk) === 1) {
-            $actualPk = $pk[0];
-            $expectedKey = $actualPk;
+        if (count($ddlPrimaryKey) === 1) {
+            $ddlKeyName = $ddlPrimaryKey[0];
+            $expectedKey = $ddlKeyName;
 
-            if ($keyName !== null && $keyName !== $actualPk) {
-                $issues[] = "pk mismatch: DDL `{$actualPk}` vs model `{$keyName}`";
+            if ($keyName !== null && $keyName !== $ddlKeyName) {
+                $issues[] = "pk mismatch: DDL `{$ddlKeyName}` vs model `{$keyName}`";
             }
 
-            $pkColumn = $ddl->column($actualPk);
-            $isIdentity = $pkColumn->isIdentity ?? false;
+            $ddlKeyColumn = $ddl->column($ddlKeyName);
+            $isIdentity = $ddlKeyColumn->isIdentity ?? false;
             $expectedIncrementing = $isIdentity;
 
             if ($keyName !== null && $effective->incrementing !== $isIdentity) {
@@ -104,11 +104,11 @@ final class ModelFactsResolver
                 );
             }
 
-            $pkType = $pkColumn->type ?? '';
-            $expectedKeyType = ColumnType::keyType($pkType);
+            $ddlKeyType = $ddlKeyColumn->type ?? '';
+            $expectedKeyType = ColumnType::keyType($ddlKeyType);
 
             if ($keyName !== null && $effective->keyType !== $expectedKeyType) {
-                $issues[] = "keyType mismatch: DDL {$pkType} => `{$expectedKeyType}` vs model `{$effective->keyType}`";
+                $issues[] = "keyType mismatch: DDL {$ddlKeyType} => `{$expectedKeyType}` vs model `{$effective->keyType}`";
             }
         }
 
@@ -138,6 +138,7 @@ final class ModelFactsResolver
      * trait or an ancestor, excluding one on the class itself.
      *
      * @param  ReflectionClass<Model>  $reflection
+     *
      * @return array<string, string|bool>
      */
     private function inheritedTable(ReflectionClass $reflection): array
@@ -219,6 +220,7 @@ final class ModelFactsResolver
      *
      * @param  ReflectionClass<Model>  $reflection
      * @param  class-string<TAttribute>  $attribute
+     *
      * @return TAttribute|null
      */
     private function classAttribute(ReflectionClass $reflection, string $attribute): ?object

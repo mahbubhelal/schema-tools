@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Commands;
 
+use Illuminate\Console\Attributes\Description;
+use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\App;
 use Mahbub\SchemaTools\Actions\DumpSourceSchema;
 use Mahbub\SchemaTools\Support\ConnectionDump;
+use Mahbub\SchemaTools\Support\DumpStatus;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 
 /**
@@ -17,66 +20,78 @@ use Mahbub\SchemaTools\Support\FixtureConnections;
  *   php artisan schema:dump --env=production --dry-run
  *   php artisan schema:dump --env=staging --connection=sugar --connection=cid
  */
+#[Description('Rebuild the schema fixtures from the source databases, using the names in the manifest')]
+#[Signature('schema:dump
+        {--dry-run : Read the source and preview the diff without writing the fixtures}
+        {--connection=* : Only rebuild the fixtures of these connections}')]
 final class DumpCommand extends Command
 {
-    protected $signature = 'schema:dump
-        {--dry-run : Read the source and preview the diff without writing the fixtures}
-        {--connection=* : Only rebuild the fixtures of these connections}';
-
-    protected $description = 'Rebuild the schema fixtures from the source databases, using the names in the manifest';
-
-    public function handle(DumpSourceSchema $dumpSourceSchema, FixtureConnections $connections): int
+    public function handle(DumpSourceSchema $dumpSourceSchema, FixtureConnections $fixtureConnections): int
     {
         $write = $this->option('dry-run') !== true;
         $only = $this->onlyConnections();
+        $unknownConnections = array_diff($only, $fixtureConnections->all());
+
+        if ($unknownConnections !== []) {
+            foreach ($unknownConnections as $unknownConnection) {
+                $this->error("[{$unknownConnection}] is not a fixture-backed connection");
+            }
+
+            return self::FAILURE;
+        }
 
         $this->line('Source environment: ' . App::environmentFile());
         $this->newLine();
 
-        foreach (array_diff($only, $connections->all()) as $unknown) {
-            $this->warn("[{$unknown}] is not a fixture-backed connection, ignored");
-        }
+        $dumpResult = $dumpSourceSchema->handle($only);
 
-        foreach ($dumpSourceSchema->handle($only)->connections as $connection) {
-            $this->report($connection, $write);
+        foreach ($dumpResult->connections as $connectionDump) {
+            $this->report($connectionDump, $write);
         }
 
         $this->newLine();
+
+        if ($dumpResult->hasFailures()) {
+            $this->error('Some fixtures could not be rebuilt; see the warnings above.');
+
+            return self::FAILURE;
+        }
+
         $this->line($write ? 'Fixtures written.' : 'Dry run — omit --dry-run to write the fixtures.');
 
         return self::SUCCESS;
     }
 
-    private function report(ConnectionDump $dump, bool $write): void
+    private function report(ConnectionDump $connectionDump, bool $write): void
     {
-        foreach ($dump->warnings as $warning) {
-            $this->warn("[{$dump->connection}] {$warning}");
+        foreach ($connectionDump->warnings as $warning) {
+            $this->warn("[{$connectionDump->connection}] {$warning}");
         }
 
-        if ($dump->skipped) {
-            $this->line("[{$dump->connection}] {$dump->skipReason}, skipped");
+        if ($connectionDump->status === DumpStatus::Skipped) {
+            $this->line("[{$connectionDump->connection}] {$connectionDump->skipReason}, skipped");
 
             return;
         }
 
-        if ($dump->failed) {
+        if ($connectionDump->status === DumpStatus::Failed) {
             return;
         }
 
         $report = [];
 
-        if ($dump->schemaContent !== null) {
-            $changed = $this->putFixture($dump->schemaPath, $dump->schemaContent, $write);
-            $report[] = $dump->tableCount . ' table(s)' . ($changed ? ' [changed]' : ' [unchanged]');
+        if ($connectionDump->schemaContent !== null) {
+            $changed = $this->putFixture($connectionDump->schemaPath, $connectionDump->schemaContent, $write);
+            $report[] = $connectionDump->tableCount . ' table(s)' . ($changed ? ' [changed]' : ' [unchanged]');
         }
 
-        if ($dump->viewsContent !== null) {
-            $changed = $this->putFixture($dump->viewsPath, $dump->viewsContent, $write);
-            $report[] = $dump->viewCount . ' view(s)' . ($changed ? ' [changed]' : ' [unchanged]');
+        if ($connectionDump->viewsContent !== null) {
+            $changed = $this->putFixture($connectionDump->viewsPath, $connectionDump->viewsContent, $write);
+            $report[] = $connectionDump->viewCount . ' view(s)' . ($changed ? ' [changed]' : ' [unchanged]');
         }
 
         $verb = $write ? 'wrote' : 'would write';
-        $this->line("[{$dump->connection}] {$verb} " . implode(', ', $report));
+        $this->line("[{$connectionDump->connection}] {$verb} " . implode(', ', $report));
     }
 
     /**

@@ -1,0 +1,180 @@
+#!/bin/bash
+set -e
+
+SERVICE="${SERVICE:-local}"
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
+
+RED='\033[0;31m'
+NC='\033[0m'
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") <command> [options]
+
+Helper script for the package's Docker environment.
+
+Commands:
+    build              Build the Docker container
+    up                 Start container(s) in detached mode
+    down               Stop and remove container(s)
+    destroy            Stop container(s) and remove local images
+    downall            Stop all containers
+    attach             Attach to container shell
+    logs               View container logs
+    exec <cmd>         Execute a command in the container
+    composer <cmd>     Run composer command in the container
+    php [cmd]          Run PHP command in the container
+    testbench [cmd]    Run Testbench command in the container
+    pint [args]        Run Laravel Pint in the container
+    rector [args]      Run Rector in the container
+    phpstan [args]     Run PHPStan in the container
+    pest [args]        Run Pest tests in the container
+    reup               Restart container (down + up)
+    buildup            Build and start container (build + up)
+    ra                 Restart and attach (reup + attach)
+    ba                 Build, start, and attach (buildup + attach)
+    a                  Alias for attach
+
+Options:
+    -s, --service      Service name (default: local)
+    -h, --help         Show this help message
+EOF
+
+    exit 0
+}
+
+error() {
+    echo -e "${RED}Error: $1${NC}" >&2
+    exit 1
+}
+
+parse_options() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -s|--service)
+                [[ -z "$2" || "$2" == -* ]] && error "Option $1 requires an argument"
+                SERVICE="$2"
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    REMAINING_ARGS=("$@")
+}
+
+cmd_build() {
+    export HOST_UID HOST_GID
+    docker compose build "$SERVICE"
+}
+
+cmd_up() {
+    export HOST_UID HOST_GID
+    docker compose up -d "$SERVICE" --no-build
+}
+
+cmd_down() {
+    docker compose rm -fvs "$SERVICE"
+}
+
+cmd_destroy() {
+    docker compose down --rmi local
+}
+
+cmd_downall() {
+    docker compose down
+}
+
+cmd_attach() {
+    docker compose exec "$SERVICE" /bin/sh
+}
+
+cmd_logs() {
+    docker compose logs "$SERVICE"
+}
+
+cmd_exec() {
+    [[ -z "$1" ]] && error "exec requires a command argument"
+    docker compose exec "$SERVICE" "$@"
+}
+
+cmd_composer() {
+    docker compose exec "$SERVICE" composer "$@"
+}
+
+cmd_php() {
+    docker compose exec "$SERVICE" php "$@"
+}
+
+cmd_testbench() {
+    docker compose exec "$SERVICE" ./vendor/bin/testbench "$@"
+}
+
+cmd_pint() {
+    docker compose exec "$SERVICE" ./vendor/bin/pint "$@"
+}
+
+cmd_rector() {
+    docker compose exec "$SERVICE" ./vendor/bin/rector "$@"
+}
+
+cmd_phpstan() {
+    docker compose exec "$SERVICE" ./vendor/bin/phpstan "$@"
+}
+
+cmd_pest() {
+    docker compose exec "$SERVICE" ./vendor/bin/pest "$@"
+}
+
+cmd_reup() {
+    cmd_down && cmd_up
+}
+
+cmd_buildup() {
+    cmd_build && cmd_up
+}
+
+cmd_ra() {
+    cmd_reup && cmd_attach
+}
+
+cmd_ba() {
+    cmd_buildup && cmd_attach
+}
+
+[[ $# -eq 0 ]] && usage
+
+COMMAND="$1"
+shift
+
+parse_options "$@"
+
+case "$COMMAND" in
+    build)      cmd_build ;;
+    up)         cmd_up ;;
+    down)       cmd_down ;;
+    destroy)    cmd_destroy ;;
+    downall)    cmd_downall ;;
+    attach|a)   cmd_attach ;;
+    logs)       cmd_logs ;;
+    exec)       cmd_exec "${REMAINING_ARGS[@]}" ;;
+    composer)   cmd_composer "${REMAINING_ARGS[@]}" ;;
+    php)        cmd_php "${REMAINING_ARGS[@]}" ;;
+    testbench)  cmd_testbench "${REMAINING_ARGS[@]}" ;;
+    pint)       cmd_pint "${REMAINING_ARGS[@]}" ;;
+    rector)     cmd_rector "${REMAINING_ARGS[@]}" ;;
+    phpstan)    cmd_phpstan "${REMAINING_ARGS[@]}" ;;
+    pest)       cmd_pest "${REMAINING_ARGS[@]}" ;;
+    reup)       cmd_reup ;;
+    buildup)    cmd_buildup ;;
+    ra)         cmd_ra ;;
+    ba)         cmd_ba ;;
+    -h|--help)  usage ;;
+    *)          error "Unknown command: $COMMAND. run $(basename "$0") --help for usage";;
+esac

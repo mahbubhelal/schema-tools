@@ -14,16 +14,21 @@ Everything operates on the **fixture-backed connections**: the ones that ship a
 fixture is written in follows the connection's driver: T-SQL for `sqlsrv`, MySQL
 for `mysql` and `mariadb`.
 
+## Requirements
+
+- PHP `^8.5`
+- Laravel `^13.35`
+
 ## Installation
 
 ```bash
 composer require --dev mahbubhelal/schema-tools
 ```
 
-Requires PHP 8.3, Laravel 13 (the Eloquent class attributes the audit understands
+Requires PHP 8.5, Laravel 13 (the Eloquent class attributes the audit understands
 arrived there) and Rector 2, which the package pulls in for `schema:audit --fix`.
-The service provider is auto-discovered. Publish the config if you need to change
-any of the default paths:
+The service provider is auto-discovered. Publish the config file to the project
+root:
 
 ```bash
 php artisan vendor:publish --tag=schema-tools-config
@@ -31,55 +36,83 @@ php artisan vendor:publish --tag=schema-tools-config
 
 ## Configuration
 
-`config/schema-tools.php` (all paths have sensible Laravel defaults):
-
-| Key | Default | What it points at |
-| --- | --- | --- |
-| `schema_path` | `database_path('schema')` | The committed `*-schema.sql` / `*-views.sql` fixtures. A connection is "fixture-backed" when it has a `<connection>-schema.sql` here. |
-| `manifest_path` | `database_path('schema/source-tables.php')` | The curated table/view manifest. |
-| `models_path` | `app_path('Models')` | Where `schema:detect` and `schema:audit` find models. |
-| `queries_path` | `app_path('Queries')` | Where `schema:detect` scans raw SQL for table references, recursively. |
-| `factories_path` | `database_path('factories')` | Where `schema:audit` finds factories. |
-| `squashed_migrations` | `[]` | MySQL only: connection => migrations directory the fixture already contains (see `schema:dump`). |
-| `hand_maintained` | `[]` | Connections whose fixtures are written by hand: audited like any other, never dumped. |
-| `declaration_style` | `null` | `attributes` or `properties` to hold every model to one style; `null` allows either (never mixed within a model). |
-| `rector_binary` | `base_path('vendor/bin/rector')` | The Rector executable `schema:audit --fix` runs. |
-
-Each scan path may be one directory, a glob pattern, or a list of either — so a
-modular layout is one setting:
+The package is installed with `--dev`, so its config lives in `schema-tools.php`
+at the project root, not in `config/`: only the package reads it, it never
+reaches production, and it may reference anything a dev dependency provides.
+Every key is optional; a project on the default paths needs the file only to
+list `sources`.
 
 ```php
-'models_path' => [app_path('Models'), base_path('app-modules/*/src/Models')],
-'queries_path' => base_path('app-modules/*/src/Queries'),
-'factories_path' => [database_path('factories'), base_path('app-modules/*/database/factories')],
-```
+<?php
 
-## The manifest — `source-tables.php`
-
-The manifest is the single source of truth for *which* tables and views the
-project relies on, per connection. It has two sections:
-
-```php
 return [
-    'manual' => [
-        // raw SQL in the nightly report job
-        'sugar' => ['bhea_orders_cstm'],
+    'connections' => [
+        'sugar' => [
+            // raw SQL in the nightly report job
+            'sources' => ['bhea_orders_cstm'],
+        ],
+        'scoring' => [
+            'squashed_migrations' => base_path('app-modules/scoring/database/migrations'),
+        ],
+        'legacy' => [
+            'hand_maintained' => true,
+        ],
     ],
-    'generated' => [
-        'tcb' => ['Center', 'press', 'vPress'],
-        'sugar' => ['contacts', 'contacts_cstm'],
+
+    'paths' => [
+        'models' => [app_path('Models'), base_path('app-modules/*/src/Models')],
     ],
+
+    'declaration_style' => 'attributes',
 ];
 ```
 
-`manual` is yours: list there what `schema:detect` cannot see, and it is kept
-exactly as written, comments included — no command ever touches it. `generated`
-belongs to `schema:detect`, which rebuilds it on every run; do not edit it by hand.
-`schema:dump` and `schema:audit` read both sections together (a name in both
-counts once). A flat legacy manifest (connection => names, no sections) is read
-as `generated` and takes the two-section shape the next time `schema:detect`
-writes — move any hand-added names under `manual` before that run, or they are
-dropped as unreferenced.
+Per connection:
+
+| Key | What it does |
+| --- | --- |
+| `sources` | Tables and views `schema:detect` cannot see (raw SQL outside the queries paths, seeds, tests). See [the manifest](#the-manifest). |
+| `squashed_migrations` | MySQL only: the directory of migrations the fixture already contains (see `schema:dump`). |
+| `hand_maintained` | `true` when the fixtures are written by hand: audited like any other, never dumped. |
+
+Project-wide:
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `paths.schema` | `database_path('schema')` | The committed `*-schema.sql` / `*-views.sql` fixtures and the generated `source-tables.php`. A connection is "fixture-backed" when it has a `<connection>-schema.sql` here. |
+| `paths.models` | `app_path('Models')` | Where `schema:detect` and `schema:audit` find models. |
+| `paths.queries` | `app_path('Queries')` | Where `schema:detect` scans raw SQL for table references, recursively. |
+| `paths.factories` | `database_path('factories')` | Where `schema:audit` finds factories. |
+| `declaration_style` | `'attributes'` | `attributes` or `properties` to hold every model to one style; `null` allows either (never mixed within a model). |
+
+`paths` is merged key by key, so set only the ones that differ. Each scan path
+may be one directory, a glob pattern, or a list of either, so a modular layout
+is one setting; an empty list turns that scan off.
+
+A value of the wrong shape — a `paths` that is not an array, an empty or
+non-string scan path, `sources` that are not a list of names, an unknown
+`declaration_style` — stops the command with an error naming the key, rather
+than being ignored. So does a model or factory under the scan paths that fails
+to load or to construct: fix it, or move it out of the scanned directories.
+
+## The manifest
+
+The manifest is the single source of truth for *which* tables and views the
+project relies on, per connection. It is read from two places:
+
+- the `sources` of each connection in `schema-tools.php`, which are yours and
+  never written by a command;
+- `<paths.schema>/source-tables.php`, which belongs to `schema:detect`: it
+  rewrites the whole file on every run, so do not edit it by hand.
+
+```php
+return [
+    'tcb' => ['Center', 'press', 'vPress'],
+    'sugar' => ['contacts', 'contacts_cstm'],
+];
+```
+
+`schema:dump` and `schema:audit` read both together (a name in both counts once).
 
 ## Commands
 
@@ -101,16 +134,15 @@ Tables are discovered from three places:
 - every base table a committed `<connection>-views.sql` joins, so tables used only
   inside a view still get pulled.
 
-Only the `generated` section is rebuilt: names still detected keep their order,
+Only `source-tables.php` is rebuilt: names still detected keep their order,
 newly detected names are appended (sorted), names no longer referenced are
-removed, and a connection without a fixture loses its section. The `manual`
-section is left alone; a manual name the detector finds anyway is flagged as
-redundant. When the file already has a generated block, only that block is
-replaced, so the manual section survives byte for byte.
+removed, and a connection without a fixture loses its entry. A connection's
+`sources` are left alone; a source the detector finds anyway is flagged as
+redundant.
 
 ```bash
-php artisan schema:detect            # rebuilds the generated section and writes the manifest
-php artisan schema:detect --dry-run  # preview only; exits non-zero when generated is out of date
+php artisan schema:detect            # rewrites source-tables.php
+php artisan schema:detect --dry-run  # preview only; exits non-zero when it is out of date
 ```
 
 ### `php artisan schema:dump`
@@ -129,13 +161,17 @@ object order is preserved so the git diff stays readable.
   stripped as noise and a view loses its `DEFINER` clause, so whichever user
   loads the fixture can create it. The schema fixture is shaped for Laravel's
   squashed-schema loading: it clears the session `sql_mode`, disables
-  foreign-key checks, and ends with a `migrations` table. Map a connection in
-  `squashed_migrations` to the directory of migrations the fixture already
+  foreign-key checks, and ends with a `migrations` table. Give a connection a
+  `squashed_migrations` directory holding the migrations the fixture already
   contains and that table is pre-filled with them, so `migrate` marks them as
   ran instead of replaying them on top of the dumped tables.
 
-Connections listed in `hand_maintained` are skipped. The source database is
-chosen with Laravel's standard `--env` option, and `--connection` restricts a run:
+Connections marked `hand_maintained` are skipped. A connection whose source
+cannot be read — a failed query, an unsupported driver, a SQL Server view whose
+definition is encrypted — keeps its fixtures as they are, and the command exits
+non-zero once the other connections are done. The source database is chosen
+with Laravel's standard `--env` option, and `--connection` restricts a run to
+fixture-backed connections (any other name is refused before anything is read):
 
 ```bash
 php artisan schema:dump                                 # reads from .env
@@ -221,18 +257,26 @@ brought into form; an abstract model is only reordered, its mixed style kept. A
 inherits, since its own would shadow them. A composite primary key and a table missing from the fixture are
 reported by the audit but never rewritten.
 
-The rule reads the fixtures and `config/schema-tools.php` through the project's
+The rule reads the fixtures and `schema-tools.php` through the project's
 Laravel application: inside Artisan it is the running one, inside a bare Rector
-process it is booted from `bootstrap/app.php` under the working directory (or the
-file `SCHEMA_TOOLS_BOOTSTRAP` names). Names the rule introduces are written fully
+process it is booted from `bootstrap/app.php` under the working directory, so run
+Rector from the project root. Names the rule introduces are written fully
 qualified; `rector-fix.php` imports them, and so does a formatter with
 `fully_qualified_strict_types` + `import_symbols` when the rule runs from your own
 `rector.php`.
 
-## Testing
+## Development
+
+The package ships with a Docker-based dev environment. Common commands:
 
 ```bash
-composer test       # pest
-composer types      # phpstan (level max)
-composer check      # rector --dry-run, pint --test, phpstan, pest --coverage --min=100
+./dc buildup              # build and start the containers
+./dc composer install     # install dependencies
+./ci                      # every check: rector, pint, phpstan, type and line coverage (both 100%)
+./ci all                  # apply rector and pint fixes, then run phpstan, type coverage and tests
+./ci pest --filter=Name   # run tests; also ./ci rector|pint|phpstan|types|coverage
 ```
+
+## License
+
+The MIT License (MIT). See [LICENSE](LICENSE).

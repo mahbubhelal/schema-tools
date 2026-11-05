@@ -105,6 +105,12 @@ const HANDWRITTEN_VIEWS = <<<'SQL'
     CREATE VIEW dbo.vBlog AS SELECT 2 AS two;
     SQL;
 
+it('strips the whitespace a hand-written fixture leaves inside a column type', function (): void {
+    $path = $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Invoice] (\n    [Total] decimal (10, 2) NOT NULL\n);");
+
+    expect((new SchemaFixtureParser)->parseTables($path)['Invoice']->columns['Total']->type)->toBe('decimal(10,2)');
+})->group('need_review');
+
 it('parses tables, columns, flags and primary keys from the DDL', function (): void {
     $path = $this->workspaceFile('tcb-schema.sql', CENTER_SCHEMA);
 
@@ -143,8 +149,8 @@ it('parses the view names from the views fixture', function (): void {
 it('yields an empty result for a missing schema or views file', function (): void {
     $parser = new SchemaFixtureParser;
 
-    expect($parser->parseTables($this->workspace . '/missing-schema.sql'))->toBe([])
-        ->and($parser->parseViews($this->workspace . '/missing-views.sql'))->toBe([]);
+    expect($parser->parseTables($this->workspace . '/missing-schema.sql'))->toBeEmpty()
+        ->and($parser->parseViews($this->workspace . '/missing-views.sql'))->toBeEmpty();
 })->group('need_review');
 
 it('parses a MySQL fixture, leaving out keys, constraints and the migrations table', function (): void {

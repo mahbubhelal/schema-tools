@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Commands;
 
+use Illuminate\Console\Attributes\Description;
+use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use Mahbub\SchemaTools\Actions\AuditModels;
@@ -13,68 +15,66 @@ use Mahbub\SchemaTools\Support\ModelAuditResult;
 use Mahbub\SchemaTools\Support\RectorRunner;
 use Mahbub\SchemaTools\Support\Report;
 
+#[Description('Audit the models and factories against the schema fixtures and manifest')]
+#[Signature('schema:audit {--fix : Rewrite the model declarations with the bundled Rector rule before auditing}')]
 final class AuditCommand extends Command
 {
-    protected $signature = 'schema:audit {--fix : Rewrite the model declarations with the bundled Rector rule before auditing}';
-
-    protected $description = 'Audit the models and factories against the schema fixtures and manifest';
-
     public function handle(AuditModels $auditModels, CheckFactories $checkFactories, RectorRunner $rectorRunner): int
     {
         if ($this->option('fix') === true) {
-            $run = $rectorRunner->fix();
+            $rectorRun = $rectorRunner->fix();
 
             $this->info('Rector');
-            $this->line($run->output);
+            $this->line($rectorRun->output);
             $this->newLine();
 
-            if (!$run->succeeded()) {
-                $this->error("Rector exited with code {$run->exitCode}; the audit below reflects the models as they are.");
+            if (!$rectorRun->succeeded()) {
+                $this->error("Rector exited with code {$rectorRun->exitCode}; the audit below reflects the models as they are.");
                 $this->newLine();
             }
         }
 
-        $models = $auditModels->handle();
-        $factories = $checkFactories->handle();
+        $modelAuditResult = $auditModels->handle();
+        $factoryCheckResult = $checkFactories->handle();
 
-        $this->reportModels($models);
+        $this->reportModels($modelAuditResult);
         $this->newLine();
-        $this->reportFactories($factories);
+        $this->reportFactories($factoryCheckResult);
 
-        return $models->passes() && $factories->passes() ? self::SUCCESS : self::FAILURE;
+        return $modelAuditResult->passes() && $factoryCheckResult->passes() ? self::SUCCESS : self::FAILURE;
     }
 
-    private function reportModels(ModelAuditResult $result): void
+    private function reportModels(ModelAuditResult $modelAuditResult): void
     {
         $this->info('Models');
-        $this->reports($result->models, $result->skipped);
+        $this->reports($modelAuditResult->models, $modelAuditResult->skipped);
         $this->newLine();
 
-        foreach ($result->manifestIssues as $issue) {
+        foreach ($modelAuditResult->manifestIssues as $issue) {
             $this->line("  ! {$issue}");
         }
 
         $this->newLine();
 
-        $summary = $result->issueCount() . ' model issue(s), ' . count($result->manifestIssues) . ' manifest issue(s).';
+        $summary = $modelAuditResult->issueCount() . ' model issue(s), ' . count($modelAuditResult->manifestIssues) . ' manifest issue(s).';
 
-        if ($result->skipped !== []) {
-            $summary .= ' Skipped ' . count($result->skipped) . ' model(s) on non-fixture connections.';
+        if ($modelAuditResult->skipped !== []) {
+            $summary .= ' Skipped ' . count($modelAuditResult->skipped) . ' model(s) on non-fixture connections.';
         }
 
         $this->line($summary);
     }
 
-    private function reportFactories(FactoryCheckResult $result): void
+    private function reportFactories(FactoryCheckResult $factoryCheckResult): void
     {
         $this->info('Factories');
-        $this->reports($result->factories, $result->skipped);
+        $this->reports($factoryCheckResult->factories, $factoryCheckResult->skipped);
         $this->newLine();
 
-        $summary = 'Checked ' . count($result->factories) . ' factories, ' . $result->issueCount() . ' issue(s) found.';
+        $summary = 'Checked ' . count($factoryCheckResult->factories) . ' factories, ' . $factoryCheckResult->issueCount() . ' issue(s) found.';
 
-        if ($result->skipped !== []) {
-            $summary .= ' Skipped ' . count($result->skipped) . ' ' . Str::plural('factory', count($result->skipped)) . ' on non-fixture connections.';
+        if ($factoryCheckResult->skipped !== []) {
+            $summary .= ' Skipped ' . count($factoryCheckResult->skipped) . ' ' . Str::plural('factory', count($factoryCheckResult->skipped)) . ' on non-fixture connections.';
         }
 
         $this->line($summary);

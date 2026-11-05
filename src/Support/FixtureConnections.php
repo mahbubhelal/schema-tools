@@ -15,7 +15,7 @@ final class FixtureConnections
 {
     public function schemaPath(): string
     {
-        return Config::string('schema-tools.schema_path');
+        return Config::string('schema-tools.paths.schema');
     }
 
     public function schemaFile(string $connection): string
@@ -33,15 +33,11 @@ final class FixtureConnections
      */
     public function all(): array
     {
-        $paths = glob($this->schemaPath() . '/*-schema.sql');
-
-        if ($paths === false) {
-            return []; // @codeCoverageIgnore
-        }
+        $pattern = $this->schemaPath() . '/*-schema.sql';
 
         return array_map(
             static fn (string $path): string => str_replace('-schema.sql', '', basename($path)),
-            $paths,
+            Glob::orFail(glob($pattern), $pattern),
         );
     }
 

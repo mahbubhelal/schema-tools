@@ -12,8 +12,8 @@ use Mahbub\SchemaTools\Tests\Fixtures\CheckFactories\Factories\PassingFactory;
 use function Pest\Laravel\artisan;
 
 it('reports model and factory drift and fails', function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
-    Config::set('schema-tools.factories_path', __DIR__ . '/../Fixtures/CheckFactories/Factories');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.paths.factories', __DIR__ . '/../Fixtures/CheckFactories/Factories');
     Config::set('schema-tools.declaration_style');
 
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA . "\n\n" . FACTORY_SCHEMA);
@@ -34,8 +34,8 @@ it('reports model and factory drift and fails', function (): void {
 })->group('need_review');
 
 it('passes cleanly when nothing is out of sync', function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Empty');
-    Config::set('schema-tools.factories_path', __DIR__ . '/../Fixtures/Empty');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Empty');
+    Config::set('schema-tools.paths.factories', __DIR__ . '/../Fixtures/Empty');
 
     artisan('schema:audit')
         ->expectsOutputToContain('0 model issue(s), 0 manifest issue(s).')
@@ -44,9 +44,9 @@ it('passes cleanly when nothing is out of sync', function (): void {
 })->group('need_review');
 
 it('rewrites the models with Rector before auditing when asked to fix', function (): void {
-    Config::set('schema-tools.rector_binary', fakeRector());
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
-    Config::set('schema-tools.factories_path', __DIR__ . '/../Fixtures/Empty');
+    $this->fakeRector();
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.paths.factories', __DIR__ . '/../Fixtures/Empty');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
     $this->manifestFile(['tcb' => AUDIT_TABLES]);
 
@@ -58,9 +58,9 @@ it('rewrites the models with Rector before auditing when asked to fix', function
 })->group('need_review');
 
 it('audits cleanly after a fix run that finds nothing to do', function (): void {
-    Config::set('schema-tools.rector_binary', fakeRector());
-    Config::set('schema-tools.models_path', $this->workspace . '/nowhere');
-    Config::set('schema-tools.factories_path', __DIR__ . '/../Fixtures/Empty');
+    $this->fakeRector();
+    Config::set('schema-tools.paths.models', $this->workspace . '/nowhere');
+    Config::set('schema-tools.paths.factories', __DIR__ . '/../Fixtures/Empty');
 
     artisan('schema:audit --fix')
         ->expectsOutputToContain('No model paths to fix.')
@@ -69,9 +69,9 @@ it('audits cleanly after a fix run that finds nothing to do', function (): void 
 })->group('need_review');
 
 it('audits anyway and says so when Rector fails', function (): void {
-    Config::set('schema-tools.rector_binary', fakeRector(1));
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Audit/Models');
-    Config::set('schema-tools.factories_path', __DIR__ . '/../Fixtures/Empty');
+    $this->fakeRector(1);
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Audit/Models');
+    Config::set('schema-tools.paths.factories', __DIR__ . '/../Fixtures/Empty');
     $this->workspaceFile('tcb-schema.sql', AUDIT_SCHEMA);
     $this->manifestFile(['tcb' => AUDIT_TABLES]);
 

@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Actions;
 
+use Illuminate\Support\Facades\File;
 use Mahbub\SchemaTools\Support\ConnectionDetection;
 use Mahbub\SchemaTools\Support\DetectionResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
 use Mahbub\SchemaTools\Support\ManifestData;
 use Mahbub\SchemaTools\Support\ModelScanner;
+use Mahbub\SchemaTools\Support\Regex;
+use Mahbub\SchemaTools\Support\ScannedModel;
 use Mahbub\SchemaTools\Support\ScanPaths;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
 use Symfony\Component\Finder\Finder;
@@ -39,94 +42,42 @@ use Symfony\Component\Finder\Finder;
 final readonly class DetectSourceTables
 {
     public function __construct(
-        private FixtureConnections $connections,
+        private FixtureConnections $fixtureConnections,
         private Manifest $manifest,
         private ModelScanner $modelScanner,
-        private SchemaFixtureParser $parser,
+        private SchemaFixtureParser $schemaFixtureParser,
         private ScanPaths $scanPaths,
     ) {}
 
     public function handle(): DetectionResult
     {
-        $connections = $this->connections->all();
-        $databaseMap = $this->connections->databaseMap();
+        $connections = $this->fixtureConnections->all();
+        $databaseMap = $this->fixtureConnections->databaseMap();
 
-        /** @var array<string, list<string>> $detected */
+        $modelsPerConnection = $this->modelsPerConnection($connections);
+
+        /** @var array<string, list<string>> */
         $detected = array_fill_keys($connections, []);
 
-        /** @var array<string, string> $canonical Lowercase name => preferred casing. */
-        $canonical = [];
-
-        foreach ($this->scanPaths->resolve('models_path') as $path) {
-            foreach ($this->modelScanner->scan($path) as $scanned) {
-                $connection = $scanned->model->getConnectionName();
-
-                if ($connection === null || !in_array($connection, $connections, true)) {
-                    continue;
-                }
-
-                $table = $scanned->model->getTable();
-                $detected[$connection][] = $table;
-                $canonical[strtolower($table)] ??= $table;
-
-                if (preg_match_all("/table: '([^']+)'/", $scanned->contents, $pivotMatches) > 0) {
-                    foreach ($pivotMatches[1] as $pivot) {
-                        $detected[$connection][] = $pivot;
-                    }
-                }
+        foreach ([$this->tablesOfModels($modelsPerConnection), $this->tablesInQueries($connections, $databaseMap), $this->tablesInViews($connections, $databaseMap)] as $tablesPerConnection) {
+            foreach ($tablesPerConnection as $connection => $names) {
+                array_push($detected[$connection], ...$names);
             }
         }
 
-        foreach ($this->queryFiles() as $file) {
-            $contents = (string) file_get_contents($file);
-            $fileConnections = array_values(array_intersect($this->connectionsNamedIn($contents), $connections));
-
-            if ($fileConnections === []) {
-                continue;
-            }
-
-            foreach ($this->tablesReferencedIn($this->sqlStringsOf($contents), $fileConnections, $databaseMap, $connections) as $connection => $names) {
-                foreach ($names as $name) {
-                    $detected[$connection][] = $name;
-                }
-            }
-        }
-
-        foreach ($connections as $connection) {
-            $viewsPath = $this->connections->viewsFile($connection);
-
-            if (!is_file($viewsPath)) {
-                continue;
-            }
-
-            foreach ($this->tablesReferencedIn((string) file_get_contents($viewsPath), [$connection], $databaseMap, $connections) as $viewConnection => $names) {
-                foreach ($names as $name) {
-                    $detected[$viewConnection][] = $name;
-                }
-            }
-        }
-
-        foreach ($connections as $connection) {
-            foreach (array_keys($this->parser->parseTables($this->connections->schemaFile($connection))) as $name) {
-                $canonical[strtolower($name)] ??= $name;
-            }
-
-            foreach ($this->parser->parseViews($this->connections->viewsFile($connection)) as $name) {
-                $canonical[strtolower($name)] ??= $name;
-            }
-        }
+        $canonical = $this->canonicalNames($modelsPerConnection, $connections);
 
         $canonicalise = static fn (string $name): string => $canonical[strtolower($name)] ?? $name;
 
-        $manifest = $this->manifest->load();
-        $generated = array_intersect_key($manifest->generated, array_fill_keys($connections, true));
-        $droppedConnections = array_values(array_diff(array_keys($manifest->generated), $connections));
+        $manifestData = $this->manifest->load();
+        $generated = array_intersect_key($manifestData->generated, array_fill_keys($connections, true));
+        $droppedConnections = array_values(array_diff(array_keys($manifestData->generated), $connections));
 
         /** @var array<string, array{additions: list<string>, removed: list<string>, redundant: list<string>}> */
         $changes = [];
 
         foreach ($connections as $connection) {
-            /** @var array<string, string> $detectedNames Lowercase => preferred casing. */
+            /** @var array<string, string> Lowercase => preferred casing. */
             $detectedNames = [];
 
             foreach ($detected[$connection] as $name) {
@@ -149,18 +100,18 @@ final readonly class DetectSourceTables
             $changes[$connection] = [
                 'additions' => $additions,
                 'removed' => $removed,
-                'redundant' => array_values(array_filter($manifest->manual[$connection] ?? [], $isDetected)),
+                'redundant' => array_values(array_filter($manifestData->manual[$connection] ?? [], $isDetected)),
             ];
         }
 
-        $reconciled = new ManifestData(manual: $manifest->manual, generated: $generated);
+        $reconciled = new ManifestData(manual: $manifestData->manual, generated: $generated);
         $summaries = [];
 
         foreach ($connections as $connection) {
             $summaries[] = new ConnectionDetection(
                 connection: $connection,
                 total: count($reconciled->names($connection)),
-                manualCount: count($manifest->manual[$connection] ?? []),
+                manualCount: count($manifestData->manual[$connection] ?? []),
                 additions: $changes[$connection]['additions'],
                 removed: $changes[$connection]['removed'],
                 redundantManual: $changes[$connection]['redundant'],
@@ -171,6 +122,159 @@ final readonly class DetectSourceTables
     }
 
     /**
+     * @param  list<string>  $connections
+     *
+     * @return array<string, list<ScannedModel>>
+     */
+    private function modelsPerConnection(array $connections): array
+    {
+        $models = [];
+
+        foreach ($this->scanPaths->resolve('models') as $path) {
+            foreach ($this->modelScanner->scan($path) as $scannedModel) {
+                $connection = $scannedModel->model->getConnectionName();
+
+                if ($connection !== null && in_array($connection, $connections, true)) {
+                    $models[$connection][] = $scannedModel;
+                }
+            }
+        }
+
+        return $models;
+    }
+
+    /**
+     * Each model's own table plus any relationship pivot it declares with a
+     * `table:` named argument.
+     *
+     * @param  array<string, list<ScannedModel>>  $modelsPerConnection
+     *
+     * @return array<string, list<string>>
+     */
+    private function tablesOfModels(array $modelsPerConnection): array
+    {
+        $tables = [];
+
+        foreach ($modelsPerConnection as $connection => $scannedModels) {
+            foreach ($scannedModels as $scannedModel) {
+                $tables[$connection][] = $scannedModel->model->getTable();
+
+                Regex::orFail(preg_match_all("/table: '([^']+)'/", $scannedModel->contents, $pivotMatches));
+
+                array_push($tables[$connection], ...$pivotMatches[1]);
+            }
+        }
+
+        return $tables;
+    }
+
+    /**
+     * Lowercase name => preferred casing: a model's table name wins, then the
+     * name as the fixture DDL spells it.
+     *
+     * @param  array<string, list<ScannedModel>>  $modelsPerConnection
+     * @param  list<string>  $connections
+     *
+     * @return array<string, string>
+     */
+    private function canonicalNames(array $modelsPerConnection, array $connections): array
+    {
+        $canonical = [];
+
+        foreach ($modelsPerConnection as $scannedModels) {
+            foreach ($scannedModels as $scannedModel) {
+                $table = $scannedModel->model->getTable();
+                $canonical[strtolower($table)] ??= $table;
+            }
+        }
+
+        foreach ($this->fixtureNames($connections) as $name) {
+            $canonical[strtolower($name)] ??= $name;
+        }
+
+        return $canonical;
+    }
+
+    /**
+     * The tables the raw SQL in the query files references, by the connection
+     * that owns them.
+     *
+     * @param  list<string>  $connections
+     * @param  array<string, string>  $databaseMap
+     *
+     * @return array<string, list<string>>
+     */
+    private function tablesInQueries(array $connections, array $databaseMap): array
+    {
+        $found = [];
+
+        foreach ($this->queryFiles() as $file) {
+            $contents = File::get($file);
+            $fileConnections = array_values(array_intersect($this->connectionsNamedIn($contents), $connections));
+
+            if ($fileConnections === []) {
+                continue;
+            }
+
+            foreach ($this->tablesReferencedIn($this->sqlStringsOf($contents), $fileConnections, $databaseMap, $connections) as $connection => $names) {
+                $found[$connection] = [...$found[$connection] ?? [], ...$names];
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * The base tables the committed views fixtures join, by the connection
+     * that owns them.
+     *
+     * @param  list<string>  $connections
+     * @param  array<string, string>  $databaseMap
+     *
+     * @return array<string, list<string>>
+     */
+    private function tablesInViews(array $connections, array $databaseMap): array
+    {
+        $found = [];
+
+        foreach ($connections as $connection) {
+            $viewsPath = $this->fixtureConnections->viewsFile($connection);
+
+            if (!is_file($viewsPath)) {
+                continue;
+            }
+
+            foreach ($this->tablesReferencedIn(File::get($viewsPath), [$connection], $databaseMap, $connections) as $viewConnection => $names) {
+                $found[$viewConnection] = [...$found[$viewConnection] ?? [], ...$names];
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Every table and view name the fixtures define, as the DDL spells it.
+     *
+     * @param  list<string>  $connections
+     *
+     * @return list<string>
+     */
+    private function fixtureNames(array $connections): array
+    {
+        $names = [];
+
+        foreach ($connections as $connection) {
+            array_push(
+                $names,
+                ...array_keys($this->schemaFixtureParser->parseTables($this->fixtureConnections->schemaFile($connection))),
+                ...$this->schemaFixtureParser->parseViews($this->fixtureConnections->viewsFile($connection)),
+            );
+        }
+
+        return $names;
+    }
+
+    /**
      * The PHP files under the configured queries paths, recursively and in name
      * order.
      *
@@ -178,7 +282,7 @@ final readonly class DetectSourceTables
      */
     private function queryFiles(): array
     {
-        $directories = $this->scanPaths->resolve('queries_path');
+        $directories = $this->scanPaths->resolve('queries');
 
         if ($directories === []) {
             return [];
@@ -201,7 +305,7 @@ final readonly class DetectSourceTables
      */
     private function connectionsNamedIn(string $php): array
     {
-        preg_match_all("/DB::connection\\('([^']+)'\\)|\\\$connection\\s*=\\s*'([^']+)'/", $php, $matches);
+        Regex::orFail(preg_match_all("/DB::connection\\('([^']+)'\\)|\\\$connection\\s*=\\s*'([^']+)'/", $php, $matches));
 
         return array_values(array_unique(array_filter(
             [...$matches[1], ...$matches[2]],
@@ -234,20 +338,21 @@ final readonly class DetectSourceTables
      * @param  list<string>  $fileConnections
      * @param  array<string, string>  $databaseMap
      * @param  list<string>  $connections
+     *
      * @return array<string, list<string>>
      */
     private function tablesReferencedIn(string $sql, array $fileConnections, array $databaseMap, array $connections): array
     {
-        $sql = (string) preg_replace(['~--[^\n]*~', '~/\*.*?\*/~s'], '', $sql);
+        $sql = Regex::orFail(preg_replace(['~--[^\n]*~', '~/\*.*?\*/~s'], '', $sql));
 
-        preg_match_all('/\b([A-Za-z_]\w*)\s+AS\s*\(/i', $sql, $expressionMatches);
+        Regex::orFail(preg_match_all('/\b([A-Za-z_]\w*)\s+AS\s*\(/i', $sql, $expressionMatches));
         $commonTableExpressions = array_map(strtolower(...), $expressionMatches[1]);
 
-        preg_match_all(
+        Regex::orFail(preg_match_all(
             '/\b(?:FROM|JOIN|INTO|UPDATE)\s+((?:\[[^\]]+\]|`[^`]+`|[A-Za-z_#][\w$#]*)(?:\.(?:\[[^\]]+\]|`[^`]+`|[\w$#]*)){0,2})/i',
             $sql,
             $matches,
-        );
+        ));
 
         $found = [];
 
@@ -258,7 +363,7 @@ final readonly class DetectSourceTables
             ));
 
             if ($parts === []) {
-                continue; // @codeCoverageIgnore
+                continue;
             }
 
             $name = end($parts);

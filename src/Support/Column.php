@@ -21,13 +21,4 @@ final readonly class Column
     {
         return !$this->nullable && !$this->hasDefault && !$this->isIdentity;
     }
-
-    /**
-     * The SQL type with any length/precision suffix stripped — `nvarchar(255)`
-     * becomes `nvarchar`.
-     */
-    public function baseType(): string
-    {
-        return (string) preg_replace('/\(.*/s', '', $this->type);
-    }
 }

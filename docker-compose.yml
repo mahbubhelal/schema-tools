@@ -1,0 +1,13 @@
+services:
+    local:
+        container_name: schema-tools_local
+        build:
+            context: .
+        working_dir: /var/www/app
+        volumes:
+            - .:/var/www/app
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+        user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+        tty: true
+        stdin_open: true

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Dialects;
 
+use Illuminate\Contracts\Container\Container;
+use Illuminate\Support\Facades\Config;
 use Mahbub\SchemaTools\Support\Driver;
 
 /**
@@ -12,16 +14,20 @@ use Mahbub\SchemaTools\Support\Driver;
 final readonly class Dialects
 {
     public function __construct(
-        private MySqlDialect $mySqlDialect,
-        private SqlServerDialect $sqlServerDialect,
+        private Container $container,
     ) {}
 
     public function forConnection(string $connection): ?Dialect
     {
-        return match (Driver::forConnection($connection)) {
-            Driver::MySql => $this->mySqlDialect,
-            Driver::SqlServer => $this->sqlServerDialect,
-            null => null,
-        };
+        $driver = Driver::fromConnectionDriver(Config::get("database.connections.{$connection}.driver"));
+
+        if (!$driver instanceof Driver) {
+            return null;
+        }
+
+        /** @var Dialect */
+        $dialect = $this->container->make($driver->dialect());
+
+        return $dialect;
     }
 }

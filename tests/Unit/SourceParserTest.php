@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Attributes\WithoutTimestamps;
 use Mahbub\SchemaTools\Support\SourceParser;
 use PhpParser\Node\Stmt\Class_;
 
@@ -10,7 +11,7 @@ it('finds a class by its fully qualified name, with names resolved the way Recto
 
     expect($class)->toBeInstanceOf(Class_::class)
         ->and($class->attrGroups[0]->attrs[0]->name->toString())->toBe('Ts')
-        ->and($class->attrGroups[0]->attrs[0]->name->getAttribute('resolvedName')->toString())->toBe(Illuminate\Database\Eloquent\Attributes\WithoutTimestamps::class);
+        ->and($class->attrGroups[0]->attrs[0]->name->getAttribute('resolvedName')->toString())->toBe(WithoutTimestamps::class);
 })->group('need_review');
 
 it('finds nothing when the source declares no such class', function (): void {

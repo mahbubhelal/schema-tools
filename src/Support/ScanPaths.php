@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Mahbub\SchemaTools\Support;
 
 use Illuminate\Support\Facades\Config;
+use InvalidArgumentException;
 
 /**
  * Resolves a configured scan path to the directories that currently exist. A
@@ -18,22 +19,31 @@ final class ScanPaths
      */
     public function resolve(string $key): array
     {
-        $configured = Config::get("schema-tools.{$key}");
-        $patterns = is_array($configured) ? $configured : [$configured];
         $directories = [];
 
-        foreach ($patterns as $pattern) {
-            if (!is_string($pattern) || $pattern === '') {
-                continue;
-            }
-
-            $matches = glob($pattern, GLOB_ONLYDIR);
-
-            foreach ($matches === false ? [] : $matches as $directory) {
-                $directories[] = $directory;
-            }
+        foreach ($this->patterns($key) as $pattern) {
+            array_push($directories, ...Glob::orFail(glob($pattern, GLOB_ONLYDIR), $pattern));
         }
 
         return array_values(array_unique($directories));
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function patterns(string $key): array
+    {
+        $configured = Config::get("schema-tools.paths.{$key}");
+        $patterns = [];
+
+        foreach (is_array($configured) ? $configured : [$configured] as $pattern) {
+            if (!is_string($pattern) || $pattern === '') {
+                throw new InvalidArgumentException("`paths.{$key}` in schema-tools.php must be a path or glob pattern, or a list of them.");
+            }
+
+            $patterns[] = $pattern;
+        }
+
+        return $patterns;
     }
 }

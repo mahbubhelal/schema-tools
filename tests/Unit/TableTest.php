@@ -20,8 +20,6 @@ it('resolves columns case-insensitively to their DDL casing', function (): void 
     $table = tableUnderTest();
 
     expect($table)
-        ->hasColumn('centerid')->toBeTrue()
-        ->hasColumn('missing')->toBeFalse()
         ->canonicalName('name')->toBe('Name')
         ->canonicalName('nope')->toBeNull();
 })->group('need_review');
@@ -40,7 +38,7 @@ it('lists the identity columns', function (): void {
 
 it('resolves the effective primary key when :dataset', function (Table $table, array $expected): void {
     expect($table->effectivePrimaryKey())->toBe($expected);
-})->with([
+})->group('need_review')->with([
     'a formal PRIMARY KEY is declared' => [
         new Table(['Id' => new Column('int', false, false, true)], ['Id']),
         ['Id'],
@@ -64,4 +62,4 @@ it('resolves the effective primary key when :dataset', function (Table $table, a
         new Table(['Id' => new Column('int', false, false, true)], [], identityIsKey: false),
         [],
     ],
-])->group('need_review');
+]);

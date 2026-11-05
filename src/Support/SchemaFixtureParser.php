@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Support;
 
+use Illuminate\Support\Facades\File;
+
 final class SchemaFixtureParser
 {
     /**
@@ -12,8 +14,7 @@ final class SchemaFixtureParser
      */
     public const string MIGRATIONS_TABLE = 'migrations';
 
-    /** Words that open an index or constraint line rather than a column. */
-    private const array NOT_A_COLUMN = ['KEY', 'UNIQUE', 'CONSTRAINT', 'PRIMARY', 'INDEX', 'FULLTEXT', 'SPATIAL', 'FOREIGN', 'CHECK'];
+    private const array INDEX_OR_CONSTRAINT_WORDS = ['KEY', 'UNIQUE', 'CONSTRAINT', 'PRIMARY', 'INDEX', 'FULLTEXT', 'SPATIAL', 'FOREIGN', 'CHECK'];
 
     /**
      * Parse a `<connection>-schema.sql` fixture — T-SQL (`CREATE TABLE
@@ -30,15 +31,15 @@ final class SchemaFixtureParser
             return [];
         }
 
-        $sql = (string) file_get_contents($path);
+        $sql = File::get($path);
         $tables = [];
 
-        preg_match_all(
+        Regex::orFail(preg_match_all(
             '/^CREATE TABLE (?:\[dbo\]\.\[([^\]]+)\]|`([^`]+)`|(?:\w+\.)?dbo\.(\w+))\s*\((.*?)^\)[^\n;]*;/ms',
             $sql,
             $matches,
             PREG_SET_ORDER | PREG_UNMATCHED_AS_NULL,
-        );
+        ));
 
         foreach ($matches as [, $bracketed, $backticked, $bare, $body]) {
             $table = $bracketed ?? $backticked ?? $bare ?? '';
@@ -48,41 +49,8 @@ final class SchemaFixtureParser
             }
 
             $primaryKey = $this->primaryKey($body);
-            $keyColumns = array_map(strtolower(...), $primaryKey);
-            $columns = [];
 
-            foreach (explode("\n", $body) as $line) {
-                $line = trim($line);
-
-                if ($line === '' || str_starts_with($line, '--')) {
-                    continue;
-                }
-
-                if (preg_match('/^(?:\[([^\]]+)\]|`([^`]+)`|([A-Za-z_]\w*))\s+([A-Za-z0-9_]+(?:\s*\([^)]*\))?)/', $line, $columnMatch) !== 1) {
-                    continue;
-                }
-
-                // The three name alternatives are exclusive, so exactly one is non-empty.
-                $column = $columnMatch[1] . $columnMatch[2] . $columnMatch[3];
-
-                if ($columnMatch[3] !== '' && in_array(strtoupper($column), self::NOT_A_COLUMN, true)) {
-                    continue;
-                }
-
-                // A primary-key column is NOT NULL even when its own line does
-                // not say so: both dialects imply it, and a hand-written fixture
-                // may leave the nullability out. A generated column is filled in
-                // by the server, so for the purposes of "can an INSERT omit it"
-                // it behaves like a default.
-                $columns[$column] = new Column(
-                    type: strtolower(preg_replace('/\s+/', '', $columnMatch[4]) ?? $columnMatch[4]),
-                    nullable: preg_match('/\bNOT\s+NULL\b/i', $line) !== 1 && !in_array(strtolower($column), $keyColumns, true),
-                    hasDefault: preg_match('/\bDEFAULT\b|\bGENERATED ALWAYS\b/i', $line) === 1,
-                    isIdentity: preg_match('/\bIDENTITY\s*\(|\bAUTO_INCREMENT\b/i', $line) === 1,
-                );
-            }
-
-            $tables[$table] = new Table(columns: $columns, primaryKey: $primaryKey, identityIsKey: $backticked === null);
+            $tables[$table] = new Table(columns: $this->columns($body, $primaryKey), primaryKey: $primaryKey, identityIsKey: $backticked === null);
         }
 
         return $tables;
@@ -102,17 +70,65 @@ final class SchemaFixtureParser
             return [];
         }
 
-        preg_match_all(
+        Regex::orFail(preg_match_all(
             '/^CREATE(?:\s+ALGORITHM=\w+)?(?:\s+SQL SECURITY \w+)?\s+VIEW\s+(?:\[dbo\]\.\[([^\]]+)\]|`([^`]+)`|(?:dbo\.)?([A-Za-z_]\w*))/m',
-            (string) file_get_contents($path),
+            File::get($path),
             $matches,
             PREG_SET_ORDER | PREG_UNMATCHED_AS_NULL,
-        );
+        ));
 
         return array_map(
             static fn (array $match): string => $match[1] ?? $match[2] ?? $match[3] ?? '',
             $matches,
         );
+    }
+
+    /**
+     * @param  list<string>  $primaryKey
+     *
+     * @return array<string, Column>
+     */
+    private function columns(string $body, array $primaryKey): array
+    {
+        $keyColumns = array_map(strtolower(...), $primaryKey);
+        $columns = [];
+
+        foreach (explode("\n", $body) as $line) {
+            $line = trim($line);
+
+            if ($line === '' || str_starts_with($line, '--')) {
+                continue;
+            }
+
+            if (preg_match('/^(?:\[([^\]]+)\]|`([^`]+)`|([A-Za-z_]\w*))\s+([A-Za-z0-9_]+(?:\s*\([^)]*\))?)/', $line, $columnMatch, PREG_UNMATCHED_AS_NULL) !== 1) {
+                Regex::failOnError();
+
+                continue;
+            }
+
+            [, $bracketedColumn, $backtickedColumn, $bareWord, $columnType] = $columnMatch;
+
+            if ($bareWord !== null && in_array(strtoupper($bareWord), self::INDEX_OR_CONSTRAINT_WORDS, true)) {
+                continue;
+            }
+
+            $column = $bracketedColumn ?? $backtickedColumn ?? $bareWord ?? '';
+            $type = Regex::orFail(preg_replace('/\s+/', '', $columnType));
+
+            // A primary-key column is NOT NULL even when its own line does
+            // not say so: both dialects imply it, and a hand-written fixture
+            // may leave the nullability out. A generated column is filled in
+            // by the server, so for the purposes of "can an INSERT omit it"
+            // it behaves like a default.
+            $columns[$column] = new Column(
+                type: strtolower($type),
+                nullable: Regex::orFail(preg_match('/\bNOT\s+NULL\b/i', $line)) !== 1 && !in_array(strtolower($column), $keyColumns, true),
+                hasDefault: Regex::orFail(preg_match('/\bDEFAULT\b|\bGENERATED ALWAYS\b/i', $line)) === 1,
+                isIdentity: Regex::orFail(preg_match('/\bIDENTITY\s*\(|\bAUTO_INCREMENT\b/i', $line)) === 1,
+            );
+        }
+
+        return $columns;
     }
 
     /**
@@ -124,6 +140,8 @@ final class SchemaFixtureParser
     private function primaryKey(string $body): array
     {
         if (preg_match('/^\s*(?:CONSTRAINT\s+\S+\s+)?PRIMARY KEY\s*\((.+?)\)/im', $body, $match) !== 1) {
+            Regex::failOnError();
+
             return [];
         }
 

@@ -9,24 +9,19 @@ use DateTimeInterface;
 use Stringable;
 
 /**
- * Pure classification of SQL Server and MySQL column types, and the PHP-value
- * checks the factory auditor uses. Every method is stateless.
+ * Classifies SQL Server and MySQL column types, and checks the PHP values the
+ * factory auditor finds against them.
  */
 final class ColumnType
 {
     /**
      * SQL types whose values are strings; everything else maps to an int key
      * type when deciding a model's `$keyType`.
-     *
-     * @return list<string>
      */
-    public static function stringTypes(): array
-    {
-        return [
-            'char', 'varchar', 'nchar', 'nvarchar', 'text', 'ntext', 'uniqueidentifier',
-            'tinytext', 'mediumtext', 'longtext', 'enum', 'set', 'binary', 'varbinary',
-        ];
-    }
+    private const array STRING_TYPES = [
+        'char', 'varchar', 'nchar', 'nvarchar', 'text', 'ntext', 'uniqueidentifier',
+        'tinytext', 'mediumtext', 'longtext', 'enum', 'set', 'binary', 'varbinary',
+    ];
 
     /**
      * The Eloquent `$keyType` a primary-key column's SQL type implies.
@@ -35,9 +30,7 @@ final class ColumnType
      */
     public static function keyType(string $type): string
     {
-        $base = strtolower((string) preg_replace('/\(.*/s', '', $type));
-
-        return in_array($base, self::stringTypes(), true) ? 'string' : 'int';
+        return in_array(self::baseType($type), self::STRING_TYPES, true) ? 'string' : 'int';
     }
 
     /**
@@ -51,7 +44,7 @@ final class ColumnType
             $value = $value->value;
         }
 
-        $base = strtolower((string) preg_replace('/\(.*/s', '', $type));
+        $base = self::baseType($type);
 
         return match (true) {
             $type === 'bit', $type === 'tinyint(1)' => is_bool($value) || is_int($value),
@@ -76,5 +69,14 @@ final class ColumnType
             is_scalar($value) => $value . ' (' . get_debug_type($value) . ')',
             default => get_debug_type($value),
         };
+    }
+
+    /**
+     * The lowercase SQL type without its length or precision: `NVARCHAR(255)`
+     * becomes `nvarchar`.
+     */
+    private static function baseType(string $type): string
+    {
+        return strtolower(explode('(', $type, 2)[0]);
     }
 }

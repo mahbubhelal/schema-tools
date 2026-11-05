@@ -37,11 +37,7 @@ final readonly class SqlServerDialect implements Dialect
             return null;
         }
 
-        return new SourceObject($object->name, match (trim($object->type)) {
-            'U' => ObjectKind::Table,
-            'V' => ObjectKind::View,
-            default => ObjectKind::Other,
-        });
+        return new SourceObject($object->name, ObjectKind::fromSqlServerObjectType($object->type));
     }
 
     public function tableBlock(string $connection, string $table): string
@@ -60,7 +56,7 @@ final readonly class SqlServerDialect implements Dialect
 
     public function viewBlock(string $connection, string $view): string
     {
-        $definition = str_replace("\r\n", "\n", (string) $this->fetchViewDefinition->execute($connection, $view));
+        $definition = str_replace("\r\n", "\n", $this->fetchViewDefinition->execute($connection, $view));
         $definition = rtrim(rtrim($definition), ';');
 
         return "DROP VIEW IF EXISTS [dbo].[{$view}];\n\n{$definition};";

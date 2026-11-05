@@ -2,22 +2,15 @@
 
 declare(strict_types=1);
 
+use Illuminate\Container\Container;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Mahbub\SchemaTools\Actions\DumpSourceSchema;
 use Mahbub\SchemaTools\Dialects\Dialects;
-use Mahbub\SchemaTools\Dialects\MySqlDialect;
-use Mahbub\SchemaTools\Dialects\SqlServerDialect;
-use Mahbub\SchemaTools\Queries\MySql\FetchCreateTable;
-use Mahbub\SchemaTools\Queries\MySql\FetchCreateView;
-use Mahbub\SchemaTools\Queries\MySql\ResolveObject as ResolveMySqlObject;
-use Mahbub\SchemaTools\Queries\SqlServer\FetchPrimaryKeyColumns;
-use Mahbub\SchemaTools\Queries\SqlServer\FetchTableColumns;
-use Mahbub\SchemaTools\Queries\SqlServer\FetchViewDefinition;
-use Mahbub\SchemaTools\Queries\SqlServer\ResolveObject;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
+use Mockery\MockInterface;
 
 const AUDIT_SCHEMA = <<<'SQL'
     CREATE TABLE [dbo].[Passing] (
@@ -232,6 +225,7 @@ function col(
  */
 function sourceDatabaseFor(Connection $connection, string $name = 'tcb'): DatabaseManager
 {
+    /** @var DatabaseManager&MockInterface */
     $database = Mockery::mock(DatabaseManager::class);
     $database->shouldReceive('connection')->with($name)->andReturn($connection);
 
@@ -243,15 +237,10 @@ function sourceDatabaseFor(Connection $connection, string $name = 'tcb'): Databa
  */
 function dialectsFor(DatabaseManager $database): Dialects
 {
-    return new Dialects(
-        new MySqlDialect(new ResolveMySqlObject($database), new FetchCreateTable($database), new FetchCreateView($database)),
-        new SqlServerDialect(
-            new ResolveObject($database),
-            new FetchTableColumns($database),
-            new FetchPrimaryKeyColumns($database),
-            new FetchViewDefinition($database),
-        ),
-    );
+    $container = new Container;
+    $container->instance(DatabaseManager::class, $database);
+
+    return new Dialects($container);
 }
 
 /**
@@ -276,7 +265,7 @@ function bindSourceQueries(Connection $connection, string $name = 'tcb'): void
     app()->instance(Dialects::class, dialectsFor(sourceDatabaseFor($connection, $name)));
 }
 
-function resolvesTo(Connection $connection, string $name, ?object $object): void
+function resolvesTo(Connection&MockInterface $connection, string $name, ?object $object): void
 {
     $connection->shouldReceive('selectOne')
         ->withArgs(fn (string $sql, array $bindings): bool => str_contains($sql, 'sys.objects') && $bindings === ['dbo.' . $name])
@@ -286,7 +275,7 @@ function resolvesTo(Connection $connection, string $name, ?object $object): void
 /**
  * @param  list<object>  $rows
  */
-function tableColumns(Connection $connection, string $table, array $rows): void
+function tableColumns(Connection&MockInterface $connection, string $table, array $rows): void
 {
     $connection->shouldReceive('select')
         ->withArgs(fn (string $sql, array $b): bool => str_contains($sql, 'FROM sys.columns') && $b === ['dbo.' . $table])
@@ -296,21 +285,21 @@ function tableColumns(Connection $connection, string $table, array $rows): void
 /**
  * @param  list<object>  $rows
  */
-function primaryKey(Connection $connection, string $table, array $rows): void
+function primaryKey(Connection&MockInterface $connection, string $table, array $rows): void
 {
     $connection->shouldReceive('select')
         ->withArgs(fn (string $sql, array $b): bool => str_contains($sql, 'sys.key_constraints') && $b === ['dbo.' . $table])
         ->andReturn($rows);
 }
 
-function viewDefinition(Connection $connection, string $view, string $definition): void
+function viewDefinition(Connection&MockInterface $connection, string $view, string $definition): void
 {
     $connection->shouldReceive('selectOne')
         ->withArgs(fn (string $sql, array $b): bool => str_contains($sql, 'sys.sql_modules') && $b === ['dbo.' . $view])
         ->andReturn((object) ['definition' => $definition]);
 }
 
-function mysqlResolvesTo(Connection $connection, string $name, ?object $object): void
+function mysqlResolvesTo(Connection&MockInterface $connection, string $name, ?object $object): void
 {
     $connection->shouldReceive('selectOne')
         ->withArgs(fn (string $sql, array $bindings = []): bool => str_contains($sql, 'information_schema.TABLES') && $bindings === [$name])
@@ -321,14 +310,14 @@ function mysqlResolvesTo(Connection $connection, string $name, ?object $object):
  * Stub SHOW CREATE TABLE for a MySQL table; a null statement yields a row that
  * carries no `Create Table` column, as MySQL answers for a view.
  */
-function createTable(Connection $connection, string $table, ?string $statement): void
+function createTable(Connection&MockInterface $connection, string $table, ?string $statement): void
 {
     $connection->shouldReceive('selectOne')
         ->with('SHOW CREATE TABLE `' . $table . '`')
         ->andReturn((object) ($statement === null ? ['View' => $table] : ['Table' => $table, 'Create Table' => $statement]));
 }
 
-function createView(Connection $connection, string $view, ?string $statement): void
+function createView(Connection&MockInterface $connection, string $view, ?string $statement): void
 {
     $connection->shouldReceive('selectOne')
         ->with('SHOW CREATE VIEW `' . $view . '`')

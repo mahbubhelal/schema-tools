@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Mahbub\SchemaTools\Declarations\DeclarationReader;
 use Mahbub\SchemaTools\Declarations\DeclarationStyle;
 use Mahbub\SchemaTools\Declarations\OwnDeclarations;
+use Mahbub\SchemaTools\Declarations\Visibility;
 use Mahbub\SchemaTools\Support\SourceParser;
 
 function ownDeclarations(string $class): OwnDeclarations
@@ -36,7 +37,7 @@ it('reads the audited attributes and properties in source order, ignoring the re
     expect($declarations)
         ->attributes->toBe(['WithoutTimestamps', 'Connection', 'Table'])
         ->properties->toBe(['incrementing', 'table', 'keyType', 'primaryKey'])
-        ->visibilities->toBe(['incrementing' => 'public', 'table' => 'protected', 'keyType' => 'private', 'primaryKey' => 'public'])
+        ->visibilities->toBe(['incrementing' => Visibility::Public, 'table' => Visibility::Protected, 'keyType' => Visibility::Private, 'primaryKey' => Visibility::Public])
         ->nullKeyProperty->toBeTrue()
         ->stylingProperties()->toBe(['incrementing', 'table', 'keyType'])
         ->isMixed()->toBeTrue()

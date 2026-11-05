@@ -106,13 +106,13 @@ final class DeclarationReader
         return in_array($short, OwnDeclarations::ATTRIBUTE_ORDER, true) ? $short : null;
     }
 
-    public function visibility(Property $property): string
+    public function visibility(Property $property): Visibility
     {
         if ($property->isPrivate()) {
-            return 'private';
+            return Visibility::Private;
         }
 
-        return $property->isProtected() ? 'protected' : 'public';
+        return $property->isProtected() ? Visibility::Protected : Visibility::Public;
     }
 
     public function isNull(?Expr $expr): bool

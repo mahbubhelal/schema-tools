@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Mahbub\SchemaTools\Tests\Fixtures\CheckFactories\Factories;
+namespace Mahbub\SchemaTools\Tests\Fixtures\CheckFactoriesExploding\Factories;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
 use RuntimeException;

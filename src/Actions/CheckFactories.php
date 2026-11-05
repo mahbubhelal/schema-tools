@@ -13,6 +13,7 @@ use Mahbub\SchemaTools\Support\ColumnType;
 use Mahbub\SchemaTools\Support\FactoryCheckResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
+use Mahbub\SchemaTools\Support\Regex;
 use Mahbub\SchemaTools\Support\Report;
 use Mahbub\SchemaTools\Support\ScanPaths;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
@@ -37,22 +38,22 @@ use Throwable;
 final readonly class CheckFactories
 {
     public function __construct(
-        private FixtureConnections $connections,
+        private FixtureConnections $fixtureConnections,
         private Manifest $manifest,
-        private SchemaFixtureParser $parser,
+        private SchemaFixtureParser $schemaFixtureParser,
         private ScanPaths $scanPaths,
     ) {}
 
     public function handle(): FactoryCheckResult
     {
-        $connections = $this->connections->all();
-        $manifest = $this->manifest->load();
+        $connections = $this->fixtureConnections->all();
+        $manifestData = $this->manifest->load();
 
-        /** @var array<string, array<string, Table>> $schemas */
+        /** @var array<string, array<string, Table>> */
         $schemas = [];
 
         foreach ($connections as $connection) {
-            $schemas[$connection] = $this->parser->parseTables($this->connections->schemaFile($connection));
+            $schemas[$connection] = $this->schemaFixtureParser->parseTables($this->fixtureConnections->schemaFile($connection));
         }
 
         $reports = [];
@@ -60,7 +61,7 @@ final readonly class CheckFactories
 
         foreach ($this->factories() as $factory) {
             $modelClass = $factory->modelName();
-            /** @var Model $model */
+            /** @var Model */
             $model = new $modelClass;
             $connection = $model->getConnectionName();
 
@@ -75,7 +76,7 @@ final readonly class CheckFactories
 
             $issues = [];
 
-            if (!in_array(strtolower($table), array_map(strtolower(...), $manifest->names($connection)), true)) {
+            if (!in_array(strtolower($table), array_map(strtolower(...), $manifestData->names($connection)), true)) {
                 $issues[] = "table `{$table}` is not tracked in the manifest";
             }
 
@@ -92,9 +93,8 @@ final readonly class CheckFactories
     }
 
     /**
-     * The issues in a factory's definition() against its table's DDL.
-     *
      * @param  Factory<Model>  $factory
+     *
      * @return list<string>
      */
     private function definitionIssues(Factory $factory, Table $ddl, string $connection, string $table): array
@@ -108,60 +108,14 @@ final readonly class CheckFactories
         $issues = [];
 
         foreach ($definition as $column => $value) {
-            if ($value instanceof Closure) {
-                try {
-                    $value = $value($definition);
-                } catch (Throwable) {
-                    $issues[] = "{$column}: closure could not be evaluated, type not checked";
-
-                    continue;
-                }
-            }
-
-            $ddlColumn = $ddl->canonicalName($column);
-
-            if ($ddlColumn === null) {
-                $issues[] = "{$column}: not a column of {$connection}.{$table}";
-
-                continue;
-            }
-
-            if ($ddlColumn !== $column) {
-                $issues[] = "{$column}: case mismatch — the DDL declares `{$ddlColumn}`";
-            }
-
-            $meta = $ddl->columns[$ddlColumn];
-
-            if ($meta->nullable) {
-                $issues[] = "{$column}: nullable ({$meta->type}) — must not be in definition(), move to a state";
-            } elseif ($meta->isIdentity) {
-                $issues[] = "{$column}: is an identity the server assigns — drop from definition()";
-            } elseif ($meta->hasDefault) {
-                $issues[] = "{$column}: has a database default — omitting it cannot error, drop from definition()";
-            }
-
-            if ($value instanceof Factory || $value instanceof Sequence) {
-                continue;
-            }
-
-            if ($value === null) {
-                if (!$meta->nullable) {
-                    $issues[] = "{$column}: null value for NOT NULL {$meta->type}";
-                }
-
-                continue;
-            }
-
-            if (!ColumnType::valueFits($value, $meta->type)) {
-                $issues[] = "{$column}: " . ColumnType::describe($value) . ' does not fit ' . $meta->type;
-            }
+            array_push($issues, ...$this->definitionEntryIssues($column, $value, $definition, $ddl, $connection, $table));
         }
 
         $definitionColumns = array_map(strtolower(...), array_keys($definition));
 
-        foreach ($ddl->columns as $column => $meta) {
-            if ($meta->isRequired() && !in_array(strtolower($column), $definitionColumns, true)) {
-                $issues[] = "{$column}: required ({$meta->type} NOT NULL, no default) but missing from definition()";
+        foreach ($ddl->columns as $column => $ddlColumn) {
+            if ($ddlColumn->isRequired() && !in_array(strtolower($column), $definitionColumns, true)) {
+                $issues[] = "{$column}: required ({$ddlColumn->type} NOT NULL, no default) but missing from definition()";
             }
         }
 
@@ -169,15 +123,68 @@ final readonly class CheckFactories
     }
 
     /**
+     * @param  array<string, mixed>  $definition
+     *
+     * @return list<string>
+     */
+    private function definitionEntryIssues(string $column, mixed $value, array $definition, Table $ddl, string $connection, string $table): array
+    {
+        if ($value instanceof Closure) {
+            try {
+                $value = $value($definition);
+            } catch (Throwable) {
+                return ["{$column}: closure could not be evaluated, type not checked"];
+            }
+        }
+
+        $columnName = $ddl->canonicalName($column);
+
+        if ($columnName === null) {
+            return ["{$column}: not a column of {$connection}.{$table}"];
+        }
+
+        $issues = [];
+
+        if ($columnName !== $column) {
+            $issues[] = "{$column}: case mismatch — the DDL declares `{$columnName}`";
+        }
+
+        $ddlColumn = $ddl->columns[$columnName];
+
+        if ($ddlColumn->nullable) {
+            $issues[] = "{$column}: nullable ({$ddlColumn->type}) — must not be in definition(), move to a state";
+        } elseif ($ddlColumn->isIdentity) {
+            $issues[] = "{$column}: is an identity the server assigns — drop from definition()";
+        } elseif ($ddlColumn->hasDefault) {
+            $issues[] = "{$column}: has a database default — omitting it cannot error, drop from definition()";
+        }
+
+        if ($value instanceof Factory || $value instanceof Sequence) {
+            return $issues;
+        }
+
+        if ($value === null) {
+            return $ddlColumn->nullable ? $issues : [...$issues, "{$column}: null value for NOT NULL {$ddlColumn->type}"];
+        }
+
+        if (!ColumnType::valueFits($value, $ddlColumn->type)) {
+            $issues[] = "{$column}: " . ColumnType::describe($value) . ' does not fit ' . $ddlColumn->type;
+        }
+
+        return $issues;
+    }
+
+    /**
      * The concrete factories under the configured factories paths, in name
-     * order. A class that cannot be autoloaded, reflected or instantiated is
-     * skipped.
+     * order. A file without a namespace, or one that declares no class of its
+     * own name, holds no factory; a factory that fails to load or construct
+     * stops the check with its own error.
      *
      * @return list<Factory<Model>>
      */
     private function factories(): array
     {
-        $directories = $this->scanPaths->resolve('factories_path');
+        $directories = $this->scanPaths->resolve('factories');
 
         if ($directories === []) {
             return [];
@@ -187,32 +194,35 @@ final readonly class CheckFactories
 
         foreach (Finder::create()->in($directories)->files()->name('*.php')->sortByName() as $file) {
             if (preg_match('/^namespace ([^;]+);/m', $file->getContents(), $namespaceMatch) !== 1) {
+                Regex::failOnError();
+
                 continue;
             }
 
             $class = $namespaceMatch[1] . '\\' . $file->getBasename('.php');
 
-            try {
-                if (!class_exists($class)) {
-                    continue;
-                }
-
-                $reflection = new ReflectionClass($class);
-
-                if ($reflection->isAbstract() || !$reflection->isSubclassOf(Factory::class)) {
-                    continue;
-                }
-
-                /** @var Factory<Model> $factory */
-                $factory = $reflection->newInstance();
-            } catch (Throwable) {
+            if (!$this->isConcreteFactory($class)) {
                 continue;
             }
 
-            $factories[] = $factory;
+            $factories[] = new ReflectionClass($class)->newInstance();
         }
 
         return $factories;
+    }
+
+    /**
+     * @phpstan-assert-if-true class-string<Factory<Model>> $class
+     */
+    private function isConcreteFactory(string $class): bool
+    {
+        if (!class_exists($class)) {
+            return false;
+        }
+
+        $reflection = new ReflectionClass($class);
+
+        return !$reflection->isAbstract() && $reflection->isSubclassOf(Factory::class);
     }
 
     /**

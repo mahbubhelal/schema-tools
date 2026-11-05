@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\Config;
+use Mahbub\SchemaTools\Support\DumpResult;
+use Mahbub\SchemaTools\Support\DumpStatus;
 
 const CONTACTS_CREATE_TABLE = <<<'SQL'
     CREATE TABLE `contacts` (
@@ -63,7 +65,7 @@ it('copies a MySQL table and view verbatim, minus the auto-increment counter and
             '`missing` not found at source, skipped',
             '`perf_thing` is neither a table nor a view, skipped',
         ])
-        ->failed->toBeFalse();
+        ->status->toBe(DumpStatus::Dumped);
 })->group('need_review');
 
 it('pre-fills the migrations table from the connection\'s squashed migrations directory', function (): void {
@@ -72,7 +74,7 @@ it('pre-fills the migrations table from the connection\'s squashed migrations di
     $this->workspaceFile('migrations/2024_01_01_000000_create_contacts.php', '');
     $this->workspaceFile('migrations/2024_02_01_000000_add_seq.php', '');
     $this->workspaceFile('migrations/notes.txt', '');
-    Config::set('schema-tools.squashed_migrations', ['sugar' => $this->workspace . '/migrations']);
+    Config::set('schema-tools.connections.sugar.squashed_migrations', $this->workspace . '/migrations');
 
     mysqlResolvesTo($this->connection, 'contacts', (object) ['name' => 'contacts', 'type' => 'BASE TABLE']);
     createTable($this->connection, 'contacts', CONTACTS_CREATE_TABLE);
@@ -86,6 +88,18 @@ it('pre-fills the migrations table from the connection\'s squashed migrations di
         . "('2024_02_01_000000_add_seq', 1);"
         . "\n\nSET FOREIGN_KEY_CHECKS=1;\n",
     );
+})->group('need_review');
+
+it('rejects a squashed migrations directory that is not a path', function (): void {
+    $this->workspaceFile('sugar-schema.sql', '');
+    $this->manifestFile(['sugar' => ['contacts']]);
+    Config::set('schema-tools.connections.sugar.squashed_migrations', ['migrations']);
+
+    mysqlResolvesTo($this->connection, 'contacts', (object) ['name' => 'contacts', 'type' => 'BASE TABLE']);
+    createTable($this->connection, 'contacts', CONTACTS_CREATE_TABLE);
+
+    expect(fn (): DumpResult => dumpActionFor($this->connection, 'sugar')->handle())
+        ->toThrow(InvalidArgumentException::class, '`connections.sugar.squashed_migrations` in schema-tools.php must be a directory path.');
 })->group('need_review');
 
 it('keeps the existing order of a MySQL fixture and ignores its migrations table', function (): void {
@@ -111,10 +125,10 @@ it('leaves the fixtures of :dataset untouched with a warning', function (string 
     $dump = dumpActionFor($this->connection, $connection)->handle()->connections[0];
 
     expect($dump)
-        ->failed->toBeTrue()
+        ->status->toBe(DumpStatus::Failed)
         ->schemaContent->toBeNull()
         ->warnings->toBe(["driver `{$driver}` is not supported (mysql, mariadb, sqlsrv), fixtures left untouched"]);
-})->with([
+})->group('need_review')->with([
     'a connection on an unsupported driver' => ['legacy', 'pgsql'],
     'a connection that is not configured' => ['nowhere', '?'],
-])->group('need_review');
+]);

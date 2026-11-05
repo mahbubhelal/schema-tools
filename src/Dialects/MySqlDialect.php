@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Mahbub\SchemaTools\Dialects;
 
 use Illuminate\Support\Facades\Config;
+use InvalidArgumentException;
 use Mahbub\SchemaTools\Queries\MySql\FetchCreateTable;
 use Mahbub\SchemaTools\Queries\MySql\FetchCreateView;
 use Mahbub\SchemaTools\Queries\MySql\ResolveObject;
+use Mahbub\SchemaTools\Support\Glob;
 use Mahbub\SchemaTools\Support\Identifier;
 use Mahbub\SchemaTools\Support\ObjectKind;
+use Mahbub\SchemaTools\Support\Regex;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
 use Mahbub\SchemaTools\Support\SourceObject;
 
@@ -23,8 +26,9 @@ use Mahbub\SchemaTools\Support\SourceObject;
  * the session sql_mode (source DDL may carry zero-date defaults MySQL 8 rejects
  * by default), disables foreign-key checks (a referenced table may come after
  * the table referencing it), and ends with a `migrations` table — pre-filled
- * from the connection's entry in `schema-tools.squashed_migrations` so those
- * migrations are marked as ran instead of being replayed on top of the fixture.
+ * from the connection's `squashed_migrations` directory in `schema-tools.php`
+ * so those migrations are marked as ran instead of being replayed on top of
+ * the fixture.
  */
 final readonly class MySqlDialect implements Dialect
 {
@@ -53,31 +57,27 @@ final readonly class MySqlDialect implements Dialect
             return null;
         }
 
-        return new SourceObject($object->name, match ($object->type) {
-            'BASE TABLE' => ObjectKind::Table,
-            'VIEW' => ObjectKind::View,
-            default => ObjectKind::Other,
-        });
+        return new SourceObject($object->name, ObjectKind::fromMySqlTableType($object->type));
     }
 
     public function tableBlock(string $connection, string $table): string
     {
-        $statement = (string) preg_replace(
+        $statement = Regex::orFail(preg_replace(
             '/ AUTO_INCREMENT=\d+/',
             '',
-            (string) $this->fetchCreateTable->execute($connection, $table),
-        );
+            $this->fetchCreateTable->execute($connection, $table),
+        ));
 
         return 'DROP TABLE IF EXISTS ' . Identifier::backtick($table) . ";\n\n{$statement};";
     }
 
     public function viewBlock(string $connection, string $view): string
     {
-        $statement = (string) preg_replace(
+        $statement = Regex::orFail(preg_replace(
             '/ DEFINER=(?:`[^`]*`@`[^`]*`|\S+)/',
             '',
-            (string) $this->fetchCreateView->execute($connection, $view),
-        );
+            $this->fetchCreateView->execute($connection, $view),
+        ));
 
         return 'DROP VIEW IF EXISTS ' . Identifier::backtick($view) . ";\n\n{$statement};";
     }
@@ -103,23 +103,27 @@ final readonly class MySqlDialect implements Dialect
 
     /**
      * The `migrations` rows to pre-fill, one per migration file in the directory
-     * the connection is mapped to in `schema-tools.squashed_migrations`.
+     * the connection names as its `squashed_migrations` in `schema-tools.php`.
      *
      * @return list<string>
      */
     private function ranMigrations(string $connection): array
     {
-        $directory = Config::array('schema-tools.squashed_migrations', [])[$connection] ?? null;
+        $directory = Config::get("schema-tools.connections.{$connection}.squashed_migrations");
 
-        if (!is_string($directory)) {
+        if ($directory === null) {
             return [];
         }
 
-        $files = glob($directory . '/*_*.php');
+        if (!is_string($directory)) {
+            throw new InvalidArgumentException("`connections.{$connection}.squashed_migrations` in schema-tools.php must be a directory path.");
+        }
+
+        $pattern = $directory . '/*_*.php';
 
         return array_map(
             static fn (string $file): string => "('" . basename($file, '.php') . "', 1)",
-            $files === false ? [] : $files,
+            Glob::orFail(glob($pattern), $pattern),
         );
     }
 }

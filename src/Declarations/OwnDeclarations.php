@@ -23,7 +23,7 @@ final readonly class OwnDeclarations
     /**
      * @param  list<string>  $attributes
      * @param  list<string>  $properties
-     * @param  array<string, string>  $visibilities  Property name => public|protected|private.
+     * @param  array<string, Visibility>  $visibilities  Property name => its visibility.
      * @param  bool  $nullKeyProperty  Whether the `$primaryKey` property is present and null.
      */
     public function __construct(

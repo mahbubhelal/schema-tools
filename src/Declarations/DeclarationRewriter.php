@@ -44,7 +44,7 @@ final readonly class DeclarationRewriter
     private Standard $printer;
 
     public function __construct(
-        private DeclarationReader $reader,
+        private DeclarationReader $declarationReader,
     ) {
         $this->printer = new Standard;
     }
@@ -52,28 +52,28 @@ final readonly class DeclarationRewriter
     /**
      * Returns whether the class changed.
      */
-    public function rewrite(Class_ $class, ?ModelFacts $facts, ?DeclarationStyle $configured): bool
+    public function rewrite(Class_ $class, ?ModelFacts $modelFacts, ?DeclarationStyle $configured): bool
     {
         $before = $this->printer->prettyPrint([$class]);
 
-        $own = $this->reader->read($class);
-        $target = $configured ?? $own->dominantStyle() ?? DeclarationStyle::Attributes;
+        $ownDeclarations = $this->declarationReader->read($class);
+        $target = $configured ?? $ownDeclarations->dominantStyle() ?? DeclarationStyle::Attributes;
 
-        $desired = $this->applyFacts($this->currentValues($class), $facts);
+        $desired = $this->applyFacts($this->currentValues($class), $modelFacts);
 
         [$existingAttributes, $existingProperties] = $this->existingNodes($class);
 
         if ($target === DeclarationStyle::Attributes) {
-            $attributes = $this->attributesFor($desired, $existingAttributes, $facts->inheritedTable ?? []);
+            $attributes = $this->attributesFor($desired, $existingAttributes, $modelFacts->inheritedTable ?? []);
             $properties = [];
 
-            if (array_key_exists('primaryKey', $desired) && $this->reader->isNull($desired['primaryKey'])) {
+            if (array_key_exists('primaryKey', $desired) && $this->declarationReader->isNull($desired['primaryKey'])) {
                 $properties['primaryKey'] = $this->property('primaryKey', $desired['primaryKey'], $existingProperties);
             }
         } else {
             $attributes = [];
             $properties = [];
-            $table = $existingAttributes['Table'][0] ?? null;
+            $table = $existingAttributes['Table'] ?? null;
 
             if ($table instanceof Attribute && $this->otherTableArguments($table) !== []) {
                 $table->args = $this->otherTableArguments($table);
@@ -103,14 +103,8 @@ final readonly class DeclarationRewriter
 
         [$existingAttributes, $existingProperties] = $this->existingNodes($class);
 
-        $class->attrGroups = $this->placeAttributes(
-            array_values($class->attrGroups),
-            array_map(static fn (array $entry): Attribute => $entry[0], $existingAttributes),
-        );
-        $class->stmts = $this->placeProperties(
-            array_values($class->stmts),
-            array_map(static fn (array $entry): Property => $entry[0], $existingProperties),
-        );
+        $class->attrGroups = $this->placeAttributes(array_values($class->attrGroups), $existingAttributes);
+        $class->stmts = $this->placeProperties(array_values($class->stmts), $existingProperties);
 
         return $this->printer->prettyPrint([$class]) !== $before;
     }
@@ -127,7 +121,7 @@ final readonly class DeclarationRewriter
 
         foreach ($class->attrGroups as $group) {
             foreach ($group->attrs as $attribute) {
-                switch ($this->reader->attributeName($attribute)) {
+                switch ($this->declarationReader->attributeName($attribute)) {
                     case 'Connection':
                         if (isset($attribute->args[0])) {
                             $values['connection'] = $attribute->args[0]->value;
@@ -177,15 +171,16 @@ final readonly class DeclarationRewriter
 
     /**
      * @param  array<string, Expr>  $values
+     *
      * @return array<string, Expr>
      */
-    private function applyFacts(array $values, ?ModelFacts $facts): array
+    private function applyFacts(array $values, ?ModelFacts $modelFacts): array
     {
-        if (!$facts instanceof ModelFacts) {
+        if (!$modelFacts instanceof ModelFacts) {
             return $values;
         }
 
-        $effective = $facts->effective;
+        $effective = $modelFacts->effective;
 
         if (!$effective->connectionDeclared) {
             $values['connection'] = new String_($effective->connection);
@@ -195,7 +190,7 @@ final readonly class DeclarationRewriter
             $values['timestamps'] = $this->bool(false);
         }
 
-        $expected = $facts->expected;
+        $expected = $modelFacts->expected;
 
         if (!$expected instanceof Expectation) {
             return $values;
@@ -226,27 +221,27 @@ final readonly class DeclarationRewriter
 
     /**
      * The class's own audited attribute and property nodes, keyed by attribute
-     * short name and by property name, each remembering the index it sits at.
+     * short name and by property name.
      *
-     * @return array{array<string, array{Attribute, int}>, array<string, array{Property, int}>}
+     * @return array{array<string, Attribute>, array<string, Property>}
      */
     private function existingNodes(Class_ $class): array
     {
         $attributes = [];
 
-        foreach ($class->attrGroups as $index => $group) {
+        foreach ($class->attrGroups as $group) {
             foreach ($group->attrs as $attribute) {
-                $name = $this->reader->attributeName($attribute);
+                $name = $this->declarationReader->attributeName($attribute);
 
                 if ($name !== null) {
-                    $attributes[$name] = [$attribute, $index];
+                    $attributes[$name] = $attribute;
                 }
             }
         }
 
         $properties = [];
 
-        foreach ($class->stmts as $index => $stmt) {
+        foreach ($class->stmts as $stmt) {
             if (!$stmt instanceof Property) {
                 continue;
             }
@@ -255,7 +250,7 @@ final readonly class DeclarationRewriter
                 $name = $item->name->toString();
 
                 if (in_array($name, OwnDeclarations::PROPERTY_ORDER, true)) {
-                    $properties[$name] = [$stmt, $index];
+                    $properties[$name] = $stmt;
                 }
             }
         }
@@ -270,8 +265,9 @@ final readonly class DeclarationRewriter
      * arguments the class does not override are carried over into it.
      *
      * @param  array<string, Expr>  $desired
-     * @param  array<string, array{Attribute, int}>  $existing
+     * @param  array<string, Attribute>  $existing
      * @param  array<string, string|bool>  $inheritedTable
+     *
      * @return array<string, Attribute>
      */
     private function attributesFor(array $desired, array $existing, array $inheritedTable): array
@@ -279,7 +275,7 @@ final readonly class DeclarationRewriter
         $attributes = [];
 
         if (isset($desired['connection'])) {
-            $attribute = $existing['Connection'][0] ?? new Attribute(new FullyQualified(DeclarationReader::ATTRIBUTE_NAMESPACE . 'Connection'));
+            $attribute = $existing['Connection'] ?? new Attribute(new FullyQualified(DeclarationReader::ATTRIBUTE_NAMESPACE . 'Connection'));
             $attribute->args = [new Arg($desired['connection'])];
             $attributes['Connection'] = $attribute;
         }
@@ -291,7 +287,7 @@ final readonly class DeclarationRewriter
                 continue;
             }
 
-            if ($field === 'primaryKey' && $this->reader->isNull($desired[$field])) {
+            if ($field === 'primaryKey' && $this->declarationReader->isNull($desired[$field])) {
                 continue;
             }
 
@@ -302,7 +298,7 @@ final readonly class DeclarationRewriter
             $tableArguments[$argument] = $desired[$field];
         }
 
-        $table = $existing['Table'][0] ?? null;
+        $table = $existing['Table'] ?? null;
 
         if ($tableArguments !== [] && !$table instanceof Attribute) {
             foreach ($inheritedTable as $argument => $value) {
@@ -333,7 +329,7 @@ final readonly class DeclarationRewriter
 
         foreach (['incrementing' => 'WithoutIncrementing', 'timestamps' => 'WithoutTimestamps'] as $field => $name) {
             if (isset($desired[$field]) && !$this->isTrue($desired[$field])) {
-                $attributes[$name] = $existing[$name][0] ?? new Attribute(new FullyQualified(DeclarationReader::ATTRIBUTE_NAMESPACE . $name));
+                $attributes[$name] = $existing[$name] ?? new Attribute(new FullyQualified(DeclarationReader::ATTRIBUTE_NAMESPACE . $name));
             }
         }
 
@@ -354,15 +350,15 @@ final readonly class DeclarationRewriter
     }
 
     /**
-     * @param  array<string, array{Property, int}>  $existing
+     * @param  array<string, Property>  $existing
      */
     private function property(string $field, Expr $value, array $existing): Property
     {
-        $property = $existing[$field][0] ?? null;
+        $property = $existing[$field] ?? null;
 
         if ($property instanceof Property) {
             foreach ($property->props as $item) {
-                if ($item->name->toString() === $field && (!$this->reader->isNull($item->default) || !$this->reader->isNull($value))) {
+                if ($item->name->toString() === $field && (!$this->declarationReader->isNull($item->default) || !$this->declarationReader->isNull($value))) {
                     $item->default = $value;
                 }
             }
@@ -383,6 +379,7 @@ final readonly class DeclarationRewriter
      *
      * @param  list<AttributeGroup>  $groups
      * @param  array<string, Attribute>  $attributes
+     *
      * @return list<AttributeGroup>
      */
     private function placeAttributes(array $groups, array $attributes): array
@@ -394,7 +391,7 @@ final readonly class DeclarationRewriter
             $others = [];
 
             foreach ($group->attrs as $attribute) {
-                $name = $this->reader->attributeName($attribute);
+                $name = $this->declarationReader->attributeName($attribute);
 
                 if ($name === null) {
                     $others[] = $attribute;
@@ -423,6 +420,7 @@ final readonly class DeclarationRewriter
      *
      * @param  list<Stmt>  $stmts
      * @param  array<string, Property>  $properties
+     *
      * @return list<Stmt>
      */
     private function placeProperties(array $stmts, array $properties): array
@@ -447,8 +445,8 @@ final readonly class DeclarationRewriter
 
         $fallback = ($slots === [] ? $top : max($slots) + 1) - 0.5;
 
-        foreach (['public', 'protected', 'private'] as $visibility) {
-            $group = array_keys(array_filter($properties, fn (Property $property): bool => $this->reader->visibility($property) === $visibility));
+        foreach (Visibility::cases() as $visibility) {
+            $group = array_keys(array_filter($properties, fn (Property $property): bool => $this->declarationReader->visibility($property) === $visibility));
             $groupSlots = array_intersect_key($slots, array_flip($group));
             $keys = $this->orderBySlot($group, OwnDeclarations::PROPERTY_ORDER, $groupSlots, $fallback);
 
@@ -466,6 +464,7 @@ final readonly class DeclarationRewriter
      * @template TNode of Node
      *
      * @param  list<array{float, TNode}>  $placed
+     *
      * @return list<TNode>
      */
     private function sortedBySlot(array $placed): array
@@ -484,6 +483,7 @@ final readonly class DeclarationRewriter
      * @param  list<string>  $names
      * @param  list<string>  $order
      * @param  array<string, int>  $slots
+     *
      * @return array<string, float>
      */
     private function orderBySlot(array $names, array $order, array $slots, float $fallback): array

@@ -1,0 +1,159 @@
+#!/bin/bash
+set -uo pipefail
+
+cd "$(dirname "$0")" || exit 1
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+DIM='\033[2m'
+NC='\033[0m'
+
+FAILURES=0
+
+error() { echo -e "${RED}$1${NC}" >&2; exit 1; }
+
+fmt_duration() {
+    local s="$1"
+    if ((s < 60)); then
+        printf '%ds' "$s"
+    else
+        printf '%dm%02ds' "$((s / 60))" "$((s % 60))"
+    fi
+}
+
+usage() {
+    cat <<EOF
+Usage: ./ci [command] [tool args...]
+
+Aggregate commands:
+  check           Run every check and print a per-tool pass/fail summary.
+                  Full output is shown only for the tools that fail.
+                  Exits non-zero if any check fails. (default)
+  all             Run every tool with fixes applied and full streaming output.
+
+Individual commands:
+  rector        ./dc rector
+  pint          ./dc pint --parallel
+  phpstan       ./dc phpstan --memory-limit=2G
+  pest          ./dc pest --bail
+  types         ./dc pest --type-coverage
+  coverage      ./dc pest --coverage --bail
+
+Examples:
+  ./ci                          Run the quiet check summary
+  ./ci all                      Apply fixes and run the full suite
+  ./ci pest --filter=SomeTest   Run a single test through ./dc pest
+EOF
+    exit 0
+}
+
+run_check() {
+    local name="$1" ok="$2"
+    shift 2
+
+    local tmp
+    tmp=$(mktemp)
+
+    "$@" >"$tmp" 2>&1 &
+    local pid=$!
+    local start=$SECONDS
+    trap 'kill "$pid" 2>/dev/null; rm -f "$tmp"; printf "\n"; exit 130' INT
+
+    if [[ -t 1 ]]; then
+        local frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+        local i=0
+        while kill -0 "$pid" 2>/dev/null; do
+            printf '\r\033[K  %b%s%b %-8s %b%ds%b' \
+                "$YELLOW" "${frames[i++ % ${#frames[@]}]}" "$NC" \
+                "$name" "$DIM" "$((SECONDS - start))" "$NC"
+            sleep 0.1
+        done
+        printf '\r\033[K'
+    else
+        printf '  … %s\n' "$name"
+    fi
+
+    wait "$pid"
+    local status=$?
+    trap - INT
+
+    local output elapsed
+    output=$(<"$tmp")
+    elapsed=$(fmt_duration "$((SECONDS - start))")
+    rm -f "$tmp"
+
+    if [[ $status -eq 0 ]]; then
+        printf '  %b✓%b %-8s %b%s%b %b(%s)%b\n' "$GREEN" "$NC" "$name" "$DIM" "$ok" "$NC" "$DIM" "$elapsed" "$NC"
+    else
+        printf '  %b✗%b %-8s %bfailed%b %b(%s)%b\n' "$RED" "$NC" "$name" "$RED" "$NC" "$DIM" "$elapsed" "$NC"
+        printf '%b%s%b\n' "$DIM" '----------------------------------------' "$NC"
+        printf '%s\n' "$output"
+        printf '%b%s%b\n\n' "$DIM" '----------------------------------------' "$NC"
+        ((FAILURES++))
+    fi
+}
+
+run_step() {
+    local name="$1"
+    shift
+    echo -e "${GREEN}▶ ${name}${NC}"
+    if ! "$@"; then
+        echo -e "${RED}${name} failed.${NC}"
+        ((FAILURES++))
+    fi
+}
+
+cmd_check() {
+    local start=$SECONDS
+
+    run_check "Rector"  "no changes needed"       ./dc rector --dry-run --no-progress-bar
+    run_check "Pint"    "clean"                   ./dc pint --test --parallel --format=txt
+    run_check "PHPStan" "no errors"               ./dc phpstan --memory-limit=2G --no-progress
+    run_check "Types"   "100% type coverage"      ./dc pest --type-coverage --min=100 --compact
+    run_check "Tests"   "passed · 100% coverage"  ./dc pest --coverage --bail --min=100 --compact
+
+    local total
+    total=$(fmt_duration "$((SECONDS - start))")
+    if [[ $FAILURES -eq 0 ]]; then
+        echo -e "\n${GREEN}All checks passed.${NC} ${DIM}(${total})${NC}"
+    else
+        echo -e "\n${RED}${FAILURES} check(s) failed.${NC} ${DIM}(${total})${NC}"
+        exit 1
+    fi
+}
+
+cmd_all() {
+    local start=$SECONDS
+
+    run_step "Rector"  ./dc rector
+    run_step "Pint"    ./dc pint --parallel
+    run_step "PHPStan" ./dc phpstan --memory-limit=2G
+    run_step "Types"   ./dc pest --type-coverage
+    run_step "Tests"   ./dc pest --bail
+
+    local total
+    total=$(fmt_duration "$((SECONDS - start))")
+    if [[ $FAILURES -eq 0 ]]; then
+        echo -e "\n${GREEN}Done.${NC} ${DIM}(${total})${NC}"
+    else
+        echo -e "\n${RED}${FAILURES} step(s) failed.${NC} ${DIM}(${total})${NC}"
+        exit 1
+    fi
+}
+
+CMD="${1:-check}"
+[[ $# -gt 0 ]] && shift
+
+case "$CMD" in
+    check)          cmd_check ;;
+    all)            cmd_all ;;
+    rector)         ./dc rector "$@" ;;
+    pint)           ./dc pint --parallel "$@" ;;
+    phpstan)        ./dc phpstan --memory-limit=2G "$@" ;;
+    pest)           ./dc pest --bail "$@" ;;
+    types)          ./dc pest --type-coverage "$@" ;;
+    coverage)       ./dc pest --coverage --bail "$@" ;;
+    --help)         usage ;;
+    *)              error "Unknown command: ${CMD}. Run ./ci --help for usage." ;;
+esac

@@ -78,7 +78,7 @@ it('reports a fixture as unchanged when it already matches the source', function
         ->assertExitCode(0);
 })->group('need_review');
 
-it('dumps only the connections named with --connection and flags unknown ones', function (): void {
+it('dumps only the connections named with --connection', function (): void {
     $this->workspaceFile('tcb-schema.sql', '');
     $this->workspaceFile('tcbpermission-schema.sql', '');
     $this->manifestFile(['tcb' => ['Center'], 'tcbpermission' => ['MasterProduct']]);
@@ -86,20 +86,33 @@ it('dumps only the connections named with --connection and flags unknown ones', 
     stubCenter($this->connection);
     bindSourceQueries($this->connection);
 
-    artisan('schema:dump --connection=tcb --connection=nowhere')
-        ->expectsOutputToContain('[nowhere] is not a fixture-backed connection, ignored')
+    artisan('schema:dump --connection=tcb')
         ->expectsOutputToContain('[tcb] wrote 1 table(s) [changed]')
         ->doesntExpectOutputToContain('[tcbpermission]')
         ->assertExitCode(0);
 
-    expect(is_file($this->workspace . '/tcbpermission-schema.sql'))->toBeTrue()
+    expect($this->workspace . '/tcbpermission-schema.sql')->toBeFile()
         ->and(file_get_contents($this->workspace . '/tcbpermission-schema.sql'))->toBe('');
+})->group('need_review');
+
+it('refuses a --connection that is not fixture-backed and dumps nothing', function (): void {
+    $this->workspaceFile('tcb-schema.sql', '');
+    $this->manifestFile(['tcb' => ['Center']]);
+
+    bindSourceQueries($this->connection);
+
+    artisan('schema:dump --connection=tcb --connection=nowhere')
+        ->expectsOutputToContain('[nowhere] is not a fixture-backed connection')
+        ->doesntExpectOutputToContain('[tcb]')
+        ->assertExitCode(1);
+
+    expect(file_get_contents($this->workspace . '/tcb-schema.sql'))->toBe('');
 })->group('need_review');
 
 it('reports a hand-maintained connection as skipped', function (): void {
     $this->workspaceFile('tcb-schema.sql', "CREATE TABLE [dbo].[Center] (\n    [CenterId] int NOT NULL\n);");
     $this->manifestFile(['tcb' => ['Center']]);
-    Config::set('schema-tools.hand_maintained', ['tcb']);
+    Config::set('schema-tools.connections.tcb.hand_maintained', true);
 
     bindSourceQueries($this->connection);
 
@@ -131,7 +144,8 @@ it('warns and leaves the fixture untouched when the source fails', function (): 
 
     artisan('schema:dump')
         ->expectsOutputToContain('[tcb] source query failed (source down), fixtures left untouched')
-        ->assertExitCode(0);
+        ->expectsOutputToContain('Some fixtures could not be rebuilt; see the warnings above.')
+        ->assertExitCode(1);
 
     expect(file_get_contents($this->workspace . '/tcb-schema.sql'))->toBe($original);
 })->group('need_review');

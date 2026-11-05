@@ -12,6 +12,7 @@ use Mahbub\SchemaTools\Support\DumpResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
 use Mahbub\SchemaTools\Support\Manifest;
 use Mahbub\SchemaTools\Support\ObjectKind;
+use Mahbub\SchemaTools\Support\OrderedNames;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
 use Mahbub\SchemaTools\Support\SourceObject;
 use Throwable;
@@ -25,8 +26,8 @@ use Throwable;
  * tables into `<connection>-schema.sql`, views into `<connection>-views.sql`.
  * The existing file's order is preserved so the git diff stays readable; a name
  * the source no longer has, or a fixture object no longer in the manifest, is
- * dropped with a warning. Connections listed in `schema-tools.hand_maintained`
- * are audited like any other but never dumped.
+ * dropped with a warning. Connections marked `hand_maintained` in
+ * `schema-tools.php` are audited like any other but never dumped.
  *
  * This action only reads the source and computes the fixture content; the command
  * decides whether to write it.
@@ -34,9 +35,9 @@ use Throwable;
 final readonly class DumpSourceSchema
 {
     public function __construct(
-        private FixtureConnections $connections,
+        private FixtureConnections $fixtureConnections,
         private Manifest $manifest,
-        private SchemaFixtureParser $parser,
+        private SchemaFixtureParser $schemaFixtureParser,
         private Dialects $dialects,
     ) {}
 
@@ -45,15 +46,15 @@ final readonly class DumpSourceSchema
      */
     public function handle(array $only = []): DumpResult
     {
-        $manifest = $this->manifest->load();
+        $manifestData = $this->manifest->load();
         $dumps = [];
 
-        foreach ($this->connections->all() as $connection) {
+        foreach ($this->fixtureConnections->all() as $connection) {
             if ($only !== [] && !in_array($connection, $only, true)) {
                 continue;
             }
 
-            $dumps[] = $this->dumpConnection($connection, $manifest->names($connection));
+            $dumps[] = $this->dumpConnection($connection, $manifestData->names($connection));
         }
 
         return new DumpResult($dumps);
@@ -64,15 +65,15 @@ final readonly class DumpSourceSchema
      */
     private function dumpConnection(string $connection, array $names): ConnectionDump
     {
-        $schemaPath = $this->connections->schemaFile($connection);
-        $viewsPath = $this->connections->viewsFile($connection);
+        $schemaPath = $this->fixtureConnections->schemaFile($connection);
+        $viewsPath = $this->fixtureConnections->viewsFile($connection);
 
-        if (in_array($connection, Config::array('schema-tools.hand_maintained', []), true)) {
-            return new ConnectionDump($connection, $schemaPath, $viewsPath, null, null, 0, 0, [], failed: false, skipped: true, skipReason: 'fixtures are maintained by hand');
+        if (Config::boolean("schema-tools.connections.{$connection}.hand_maintained", false)) {
+            return ConnectionDump::skipped($connection, $schemaPath, $viewsPath, 'fixtures are maintained by hand');
         }
 
         if ($names === []) {
-            return new ConnectionDump($connection, $schemaPath, $viewsPath, null, null, 0, 0, [], failed: false, skipped: true, skipReason: 'no manifest entries');
+            return ConnectionDump::skipped($connection, $schemaPath, $viewsPath, 'no manifest entries');
         }
 
         $dialect = $this->dialects->forConnection($connection);
@@ -81,50 +82,50 @@ final readonly class DumpSourceSchema
             $driver = Config::get("database.connections.{$connection}.driver");
             $warning = 'driver `' . (is_string($driver) ? $driver : '?') . '` is not supported (mysql, mariadb, sqlsrv), fixtures left untouched';
 
-            return new ConnectionDump($connection, $schemaPath, $viewsPath, null, null, 0, 0, [$warning], failed: true, skipped: false);
+            return ConnectionDump::failed($connection, $schemaPath, $viewsPath, [$warning]);
         }
 
-        /** @var array<string, string> $tables Lowercase => canonical. */
+        /** @var array<string, string> Lowercase => canonical. */
         $tables = [];
 
-        /** @var array<string, string> $views Lowercase => canonical. */
+        /** @var array<string, string> Lowercase => canonical. */
         $views = [];
 
         $warnings = [];
 
         try {
             foreach ($names as $name) {
-                $object = $dialect->resolve($connection, $name);
+                $sourceObject = $dialect->resolve($connection, $name);
 
-                if (!$object instanceof SourceObject) {
+                if (!$sourceObject instanceof SourceObject) {
                     $warnings[] = "`{$name}` not found at source, skipped";
 
                     continue;
                 }
 
-                match ($object->kind) {
-                    ObjectKind::Table => $tables[strtolower($object->name)] = $object->name,
-                    ObjectKind::View => $views[strtolower($object->name)] = $object->name,
+                match ($sourceObject->kind) {
+                    ObjectKind::Table => $tables[strtolower($sourceObject->name)] = $sourceObject->name,
+                    ObjectKind::View => $views[strtolower($sourceObject->name)] = $sourceObject->name,
                     ObjectKind::Other => $warnings[] = "`{$name}` is neither a table nor a view, skipped",
                 };
             }
 
-            $tableOrder = $this->orderSelection(array_keys($this->parser->parseTables($schemaPath)), $tables);
-            $viewOrder = $this->orderSelection($this->parser->parseViews($viewsPath), $views);
+            $tableOrder = $this->orderSelection(array_keys($this->schemaFixtureParser->parseTables($schemaPath)), $tables);
+            $viewOrder = $this->orderSelection($this->schemaFixtureParser->parseViews($viewsPath), $views);
 
-            foreach ([...$tableOrder['dropped'], ...$viewOrder['dropped']] as $dropped) {
+            foreach ([...$tableOrder->dropped, ...$viewOrder->dropped] as $dropped) {
                 $warnings[] = "`{$dropped}` in the fixture is no longer in the manifest, dropped";
             }
 
-            $tableBlocks = array_map(static fn (string $table): string => $dialect->tableBlock($connection, $table), $tableOrder['ordered']);
-            $viewBlocks = array_map(static fn (string $view): string => $dialect->viewBlock($connection, $view), $viewOrder['ordered']);
+            $tableBlocks = array_map(static fn (string $table): string => $dialect->tableBlock($connection, $table), $tableOrder->ordered);
+            $viewBlocks = array_map(static fn (string $view): string => $dialect->viewBlock($connection, $view), $viewOrder->ordered);
         } catch (Throwable $throwable) {
             $warnings[] = "source query failed ({$throwable->getMessage()}), fixtures left untouched";
 
-            return new ConnectionDump($connection, $schemaPath, $viewsPath, null, null, 0, 0, $warnings, failed: true, skipped: false);
+            return ConnectionDump::failed($connection, $schemaPath, $viewsPath, $warnings);
         }
 
-        return new ConnectionDump(
+        return ConnectionDump::dumped(
             connection: $connection,
             schemaPath: $schemaPath,
             viewsPath: $viewsPath,
@@ -133,17 +134,14 @@ final readonly class DumpSourceSchema
             tableCount: count($tableBlocks),
             viewCount: count($viewBlocks),
             warnings: $warnings,
-            failed: false,
-            skipped: false,
         );
     }
 
     /**
      * @param  list<string>  $existing  Names already in the fixture, in file order.
      * @param  array<string, string>  $selected  Lowercase name => canonical name.
-     * @return array{ordered: list<string>, dropped: list<string>}
      */
-    private function orderSelection(array $existing, array $selected): array
+    private function orderSelection(array $existing, array $selected): OrderedNames
     {
         $ordered = [];
 
@@ -169,6 +167,6 @@ final readonly class DumpSourceSchema
             static fn (string $name): bool => !array_key_exists(strtolower($name), $selected),
         ));
 
-        return ['ordered' => [...$ordered, ...$new], 'dropped' => $dropped];
+        return new OrderedNames(ordered: [...$ordered, ...$new], dropped: $dropped);
     }
 }

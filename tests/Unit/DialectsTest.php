@@ -14,8 +14,8 @@ it('picks the dialect for :dataset', function (string $connection, ?string $expe
     } else {
         expect($dialect)->toBeInstanceOf($expected);
     }
-})->with([
+})->group('need_review')->with([
     'a mysql connection' => ['sugar', MySqlDialect::class],
     'a sqlsrv connection' => ['tcb', SqlServerDialect::class],
     'an unsupported driver' => ['legacy', null],
-])->group('need_review');
+]);

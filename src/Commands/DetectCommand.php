@@ -4,43 +4,43 @@ declare(strict_types=1);
 
 namespace Mahbub\SchemaTools\Commands;
 
+use Illuminate\Console\Attributes\Description;
+use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Mahbub\SchemaTools\Actions\DetectSourceTables;
 use Mahbub\SchemaTools\Support\Manifest;
 
+#[Description('Detect the source tables and views the code relies on and rebuild the generated section of the manifest')]
+#[Signature('schema:detect {--dry-run : Preview the reconciled manifest without writing it; exits non-zero when the generated section is out of date}')]
 final class DetectCommand extends Command
 {
-    protected $signature = 'schema:detect {--dry-run : Preview the reconciled manifest without writing it; exits non-zero when the generated section is out of date}';
-
-    protected $description = 'Detect the source tables and views the code relies on and rebuild the generated section of the manifest';
-
     public function handle(DetectSourceTables $detectSourceTables, Manifest $manifest): int
     {
-        $result = $detectSourceTables->handle();
+        $detectionResult = $detectSourceTables->handle();
 
-        foreach ($result->connections as $connection) {
-            $heading = "[{$connection->connection}] {$connection->total} name(s)";
+        foreach ($detectionResult->connections as $connectionDetection) {
+            $heading = "[{$connectionDetection->connection}] {$connectionDetection->total} name(s)";
 
-            if ($connection->manualCount > 0) {
-                $heading .= ", {$connection->manualCount} under manual";
+            if ($connectionDetection->manualCount > 0) {
+                $heading .= ", {$connectionDetection->manualCount} under manual";
             }
 
-            $this->line($heading . ': ' . count($connection->additions) . ' added, ' . count($connection->removed) . ' removed');
+            $this->line($heading . ': ' . count($connectionDetection->additions) . ' added, ' . count($connectionDetection->removed) . ' removed');
 
-            foreach ($connection->additions as $name) {
+            foreach ($connectionDetection->additions as $name) {
                 $this->line("    + {$name}");
             }
 
-            foreach ($connection->removed as $name) {
+            foreach ($connectionDetection->removed as $name) {
                 $this->line("    - {$name} (no longer referenced in code)");
             }
 
-            foreach ($connection->redundantManual as $name) {
+            foreach ($connectionDetection->redundantManual as $name) {
                 $this->line("    ~ {$name} (also detected in code; the manual entry is redundant)");
             }
         }
 
-        foreach ($result->droppedConnections as $connection) {
+        foreach ($detectionResult->droppedConnections as $connection) {
             $this->line("[{$connection}] has no fixture any more; its generated names were dropped");
         }
 
@@ -49,7 +49,7 @@ final class DetectCommand extends Command
         if ($this->option('dry-run') === true) {
             $this->line('Dry run — manifest not written.');
 
-            if ($result->hasChanges()) {
+            if ($detectionResult->hasChanges()) {
                 $this->warn('The generated section is out of date; run without --dry-run to rewrite it.');
 
                 return self::FAILURE;
@@ -60,7 +60,7 @@ final class DetectCommand extends Command
             return self::SUCCESS;
         }
 
-        $manifest->write($result->manifest);
+        $manifest->write($detectionResult->manifest);
         $this->line('Wrote ' . $this->relative($manifest->path()) . '.');
 
         return self::SUCCESS;

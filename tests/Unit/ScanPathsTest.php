@@ -12,19 +12,19 @@ beforeEach(function (): void {
 });
 
 it('resolves a single directory', function (): void {
-    Config::set('schema-tools.models_path', $this->workspace . '/app/Models');
+    Config::set('schema-tools.paths.models', $this->workspace . '/app/Models');
 
-    expect((new ScanPaths)->resolve('models_path'))->toBe([$this->workspace . '/app/Models']);
+    expect((new ScanPaths)->resolve('models'))->toBe([$this->workspace . '/app/Models']);
 })->group('need_review');
 
 it('expands a list of directories and glob patterns, without duplicates', function (): void {
-    Config::set('schema-tools.models_path', [
+    Config::set('schema-tools.paths.models', [
         $this->workspace . '/app/Models',
         $this->workspace . '/modules/*/src/Models',
         $this->workspace . '/app/Models',
     ]);
 
-    expect((new ScanPaths)->resolve('models_path'))->toBe([
+    expect((new ScanPaths)->resolve('models'))->toBe([
         $this->workspace . '/app/Models',
         $this->workspace . '/modules/alpha/src/Models',
         $this->workspace . '/modules/beta/src/Models',
@@ -32,12 +32,23 @@ it('expands a list of directories and glob patterns, without duplicates', functi
 })->group('need_review');
 
 it('resolves nothing for :dataset', function (mixed $configured): void {
-    Config::set('schema-tools.models_path', $configured);
+    Config::set('schema-tools.paths.models', $configured);
 
-    expect((new ScanPaths)->resolve('models_path'))->toBe([]);
-})->with([
+    expect((new ScanPaths)->resolve('models'))->toBeEmpty();
+})->group('need_review')->with([
     'a directory that does not exist' => ['/nowhere/at/all'],
     'a pattern that matches only files' => [fn (): string => $this->workspaceFile('app/Models/User.php', '')],
+    'an empty list' => [[]],
+]);
+
+it('rejects :dataset', function (mixed $configured): void {
+    Config::set('schema-tools.paths.models', $configured);
+
+    expect(fn (): array => (new ScanPaths)->resolve('models'))
+        ->toThrow(InvalidArgumentException::class, '`paths.models` in schema-tools.php must be a path or glob pattern, or a list of them.');
+})->group('need_review')->with([
+    'nothing' => [null],
     'an empty string' => [''],
-    'entries that are not strings' => [[null, 42]],
-])->group('need_review');
+    'a list with an entry that is not a string' => [['/app/Models', 42]],
+    'a list with an empty entry' => [['/app/Models', '']],
+]);

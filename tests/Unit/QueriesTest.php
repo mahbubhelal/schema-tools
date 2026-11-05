@@ -8,6 +8,7 @@ use Mahbub\SchemaTools\Queries\SqlServer\FetchPrimaryKeyColumns;
 use Mahbub\SchemaTools\Queries\SqlServer\FetchTableColumns;
 use Mahbub\SchemaTools\Queries\SqlServer\FetchViewDefinition;
 use Mahbub\SchemaTools\Queries\SqlServer\ResolveObject;
+use Mockery\MockInterface;
 
 /**
  * @param  list<object>  $rows
@@ -20,6 +21,7 @@ function fakeSelect(string $method, string $expectedSqlNeedle, mixed $rows): Dat
         ->withArgs(fn (string $sql, array $bindings): bool => str_contains($sql, $expectedSqlNeedle) && $bindings === ['dbo.Center'])
         ->andReturn($rows);
 
+    /** @var DatabaseManager&MockInterface */
     $database = Mockery::mock(DatabaseManager::class);
     $database->shouldReceive('connection')->once()->with('tcb')->andReturn($connection);
 
@@ -48,11 +50,15 @@ it('returns a view definition from sys.sql_modules', function (): void {
     expect($query->execute('tcb', 'Center'))->toBe('CREATE VIEW x');
 })->group('need_review');
 
-it('returns null when the source has no such view', function (): void {
-    $query = new FetchViewDefinition(fakeSelect('selectOne', 'sys.sql_modules', null));
+it('fails when the source has :dataset', function (?object $row): void {
+    $query = new FetchViewDefinition(fakeSelect('selectOne', 'sys.sql_modules', $row));
 
-    expect($query->execute('tcb', 'Center'))->toBeNull();
-})->group('need_review');
+    expect(fn (): string => $query->execute('tcb', 'Center'))
+        ->toThrow(UnexpectedValueException::class, 'sys.sql_modules has no definition for view [dbo].[Center]; it is missing or encrypted.');
+})->group('need_review')->with([
+    'no such view' => [null],
+    'only an encrypted definition' => [(object) ['definition' => null]],
+]);
 
 it('resolves an object to its catalog name and type', function (): void {
     $query = new ResolveObject(fakeSelect('selectOne', 'sys.objects', (object) ['name' => 'Center', 'type' => 'U ']));

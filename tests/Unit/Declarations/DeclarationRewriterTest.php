@@ -19,7 +19,7 @@ use PhpParser\PrettyPrinter\Standard;
 function rewritten(string $class, ?ModelFacts $facts, ?DeclarationStyle $configured): array
 {
     $node = (new SourceParser)->findClass(MODEL_PRELUDE . $class, 'App\\M');
-    $changed = (new DeclarationRewriter(new DeclarationReader))->rewrite($node, $facts, $configured);
+    $changed = new DeclarationRewriter(new DeclarationReader)->rewrite($node, $facts, $configured);
 
     return [$changed, (new Standard)->prettyPrint([$node])];
 }
@@ -483,7 +483,7 @@ it('does not redeclare anything when the DDL cannot be expected', function (): v
 function reordered(string $class): array
 {
     $node = (new SourceParser)->findClass(MODEL_PRELUDE . $class, 'App\\M');
-    $changed = (new DeclarationRewriter(new DeclarationReader))->reorder($node);
+    $changed = new DeclarationRewriter(new DeclarationReader)->reorder($node);
 
     return [$changed, (new Standard)->prettyPrint([$node])];
 }

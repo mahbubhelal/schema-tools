@@ -1,8 +1,30 @@
 includes:
     - ./vendor/larastan/larastan/extension.neon
     - ./vendor/phpstan/phpstan-strict-rules/rules.neon
+    - ./vendor/pestphp/pest-plugin-phpstan/extension.neon
 
 parameters:
     level: max
     paths:
         - src/
+        - tests/
+    excludePaths:
+        # Deliberately non-conforming models and factories the audit tests run against.
+        - tests/Fixtures/*
+    ignoreErrors:
+        # Pest's higher-order expectations (`expect($x)->key->toBe()`) and untyped dataset
+        # arguments are `mixed` to PHPStan, so these identifiers are pure noise in test code.
+        -
+            identifiers:
+                - argument.templateType
+                - argument.type
+                - method.nonObject
+                - offsetAccess.nonOffsetAccessible
+                - property.dynamicName
+                - property.nonObject
+            paths:
+                - tests/*
+            reportUnmatched: false
+        -
+            identifier: larastan.noEnvCallsOutsideOfConfig
+            reportUnmatched: false

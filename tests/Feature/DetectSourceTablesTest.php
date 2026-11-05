@@ -13,8 +13,8 @@ function detect(): DetectionResult
 }
 
 beforeEach(function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/Detect/Models');
-    Config::set('schema-tools.queries_path', __DIR__ . '/../Fixtures/Detect/Queries');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/Detect/Models');
+    Config::set('schema-tools.paths.queries', __DIR__ . '/../Fixtures/Detect/Queries');
 
     $this->workspaceFile('tcb-schema.sql', <<<'SQL'
         CREATE TABLE [dbo].[Center] (
@@ -115,7 +115,7 @@ it('routes a three-part cross-database reference to the owning connection', func
 
     $tcbpermission = collect(detect()->connections)->firstWhere('connection', 'tcbpermission');
 
-    expect($tcbpermission->additions)->toContain('MasterProduct');
+    expect($tcbpermission->additions)->toBe(['MasterProduct']);
 })->group('need_review');
 
 it('reports no changes when the generated section is up to date', function (): void {
@@ -128,8 +128,8 @@ it('reports no changes when the generated section is up to date', function (): v
 })->group('need_review');
 
 it('detects MySQL query tables through a connection property, past comments, backticks, CTEs and derived tables', function (): void {
-    Config::set('schema-tools.models_path', __DIR__ . '/../Fixtures/DetectMySql/Models');
-    Config::set('schema-tools.queries_path', __DIR__ . '/../Fixtures/DetectMySql/Queries');
+    Config::set('schema-tools.paths.models', __DIR__ . '/../Fixtures/DetectMySql/Models');
+    Config::set('schema-tools.paths.queries', __DIR__ . '/../Fixtures/DetectMySql/Queries');
     $this->workspaceFile('sugar-schema.sql', "CREATE TABLE `contacts` (\n  `id` int NOT NULL\n) ENGINE=InnoDB;");
     $this->manifestFile(generated: ['sugar' => []]);
 
@@ -139,11 +139,11 @@ it('detects MySQL query tables through a connection property, past comments, bac
 })->group('need_review');
 
 it('scans every configured models and queries path, including glob patterns', function (): void {
-    Config::set('schema-tools.models_path', [
+    Config::set('schema-tools.paths.models', [
         __DIR__ . '/../Fixtures/Detect/Models',
         __DIR__ . '/../Fixtures/DetectMySql/Models',
     ]);
-    Config::set('schema-tools.queries_path', __DIR__ . '/../Fixtures/Detect*/Queries');
+    Config::set('schema-tools.paths.queries', __DIR__ . '/../Fixtures/Detect*/Queries');
     $this->workspaceFile('sugar-schema.sql', '');
     $this->manifestFile(generated: ['tcb' => [], 'sugar' => []]);
 
@@ -157,10 +157,35 @@ it('scans every configured models and queries path, including glob patterns', fu
 })->group('need_review');
 
 it('detects nothing from queries when no queries path exists', function (): void {
-    Config::set('schema-tools.queries_path', $this->workspace . '/no-queries');
+    Config::set('schema-tools.paths.queries', $this->workspace . '/no-queries');
     $this->manifestFile(generated: ['tcb' => []]);
 
     $tcb = collect(detect()->connections)->firstWhere('connection', 'tcb');
 
     expect($tcb->additions)->toBe(['AuditLog', 'Center', 'CenterProduct']);
+})->group('need_review');
+
+it('ignores a bracketed reference that names nothing', function (): void {
+    Config::set('schema-tools.paths.models', []);
+    Config::set('schema-tools.paths.queries', []);
+    $this->workspaceFile('tcb-views.sql', "CREATE VIEW [dbo].[vOdd] AS\n    SELECT 1 FROM [[];");
+    $this->manifestFile(generated: ['tcb' => []]);
+
+    $tcb = collect(detect()->connections)->firstWhere('connection', 'tcb');
+
+    expect($tcb->additions)->toBeEmpty();
+})->group('need_review');
+
+it('fails when the SQL comments cannot be stripped', function (): void {
+    Config::set('schema-tools.paths.models', []);
+    Config::set('schema-tools.paths.queries', []);
+    $this->workspaceFile('tcb-views.sql', "CREATE VIEW [dbo].[vReport] AS\n    /* a long comment the backtrack limit cannot get through */\n    SELECT 1;");
+    $backtrackLimit = ini_set('pcre.backtrack_limit', '1');
+
+    try {
+        expect(fn (): DetectionResult => detect())
+            ->toThrow(RuntimeException::class, 'Regular expression failed: Backtrack limit exhausted');
+    } finally {
+        ini_set('pcre.backtrack_limit', (string) $backtrackLimit);
+    }
 })->group('need_review');

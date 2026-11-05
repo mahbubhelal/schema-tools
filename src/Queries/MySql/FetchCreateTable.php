@@ -6,23 +6,26 @@ namespace Mahbub\SchemaTools\Queries\MySql;
 
 use Illuminate\Database\DatabaseManager;
 use Mahbub\SchemaTools\Support\Identifier;
+use UnexpectedValueException;
 
 /**
  * The CREATE TABLE statement MySQL itself would use to recreate a table, from
- * SHOW CREATE TABLE. Null when the row carries no such statement (a view).
+ * SHOW CREATE TABLE.
  */
 final readonly class FetchCreateTable
 {
-    public function __construct(private DatabaseManager $database) {}
+    public function __construct(private DatabaseManager $databaseManager) {}
 
-    public function execute(string $connection, string $table): ?string
+    public function execute(string $connection, string $table): string
     {
-        $row = (array) $this->database->connection($connection)->selectOne(
-            'SHOW CREATE TABLE ' . Identifier::backtick($table),
-        );
-
+        $query = 'SHOW CREATE TABLE ' . Identifier::backtick($table);
+        $row = (array) $this->databaseManager->connection($connection)->selectOne($query);
         $statement = $row['Create Table'] ?? null;
 
-        return is_string($statement) ? $statement : null;
+        if (!is_string($statement)) {
+            throw new UnexpectedValueException("{$query} returned no CREATE TABLE statement.");
+        }
+
+        return $statement;
     }
 }
