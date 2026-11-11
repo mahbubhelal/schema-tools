@@ -128,7 +128,13 @@ Tables are discovered from three places:
 - every table/view referenced by the raw SQL inside the queries paths — a
   three-part `Database.dbo.Name` reference is routed to the connection that owns
   that database; a one/two-part name is attributed to the connection(s) the query
-  file talks to via `DB::connection('...')` or a `$connection = '...'` property.
+  file talks to: via `DB::connection('...')`, a `$connection = '...'` property, or
+  a scanned model it references (`new Press()->getConnection()->select(...)`). A
+  query file with none of those borrows them from the project classes it
+  references, one hop away — the helper that runs the SQL it is handed, e.g.
+  `$this->batchRunner->run(<<<'SQL' ... SQL)` where `BatchRunner` calls
+  `DB::connection('tcb')`. Classes under a `vendor` directory are not read, and
+  dependencies typed as interfaces or reached through two hops are not followed.
   Comments, temp tables (`#name`) and the names a `WITH name AS (...)` clause
   defines are not tables and are ignored;
 - every base table a committed `<connection>-views.sql` joins, so tables used only
@@ -140,9 +146,16 @@ removed, and a connection without a fixture loses its entry. A connection's
 `sources` are left alone; a source the detector finds anyway is flagged as
 redundant.
 
+A query file whose one/two-part names no connection can be found for is listed
+with those names (`! app/Queries/X.php: Foo, Bar`) instead of being skipped
+silently: its tables would otherwise count as "no longer referenced" and be
+removed. Name a connection in it (or in the helper it uses), or list the tables
+under the connection's `sources`.
+
 ```bash
 php artisan schema:detect            # rewrites source-tables.php
 php artisan schema:detect --dry-run  # preview only; exits non-zero when it is out of date
+                                     # or a query file names tables without a connection
 ```
 
 ### `php artisan schema:dump`

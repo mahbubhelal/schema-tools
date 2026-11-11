@@ -11,7 +11,7 @@ use Mahbub\SchemaTools\Actions\DetectSourceTables;
 use Mahbub\SchemaTools\Support\Manifest;
 
 #[Description('Detect the source tables and views the code relies on and rebuild the generated section of the manifest')]
-#[Signature('schema:detect {--dry-run : Preview the reconciled manifest without writing it; exits non-zero when the generated section is out of date}')]
+#[Signature('schema:detect {--dry-run : Preview the reconciled manifest without writing it; exits non-zero when the generated section is out of date or a query file names tables without a connection}')]
 final class DetectCommand extends Command
 {
     public function handle(DetectSourceTables $detectSourceTables, Manifest $manifest): int
@@ -44,6 +44,15 @@ final class DetectCommand extends Command
             $this->line("[{$connection}] has no fixture any more; its generated names were dropped");
         }
 
+        if ($detectionResult->unattributedQueries !== []) {
+            $this->newLine();
+            $this->warn('Some query files name tables without a connection; name one (DB::connection(), a model) or list the tables under sources:');
+
+            foreach ($detectionResult->unattributedQueries as $file => $names) {
+                $this->line('    ! ' . $this->relative($file) . ': ' . implode(', ', $names));
+            }
+        }
+
         $this->newLine();
 
         if ($this->option('dry-run') === true) {
@@ -51,13 +60,11 @@ final class DetectCommand extends Command
 
             if ($detectionResult->hasChanges()) {
                 $this->warn('The generated section is out of date; run without --dry-run to rewrite it.');
-
-                return self::FAILURE;
+            } else {
+                $this->line('The generated section is up to date.');
             }
 
-            $this->line('The generated section is up to date.');
-
-            return self::SUCCESS;
+            return $detectionResult->hasChanges() || $detectionResult->unattributedQueries !== [] ? self::FAILURE : self::SUCCESS;
         }
 
         $manifest->write($detectionResult->manifest);

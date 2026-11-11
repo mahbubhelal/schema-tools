@@ -15,6 +15,10 @@ use Mahbub\SchemaTools\Support\Regex;
 use Mahbub\SchemaTools\Support\ScannedModel;
 use Mahbub\SchemaTools\Support\ScanPaths;
 use Mahbub\SchemaTools\Support\SchemaFixtureParser;
+use Mahbub\SchemaTools\Support\SourceParser;
+use PhpParser\Node\Name;
+use PhpParser\NodeFinder;
+use ReflectionClass;
 use Symfony\Component\Finder\Finder;
 
 /**
@@ -27,9 +31,14 @@ use Symfony\Component\Finder\Finder;
  *   - every table/view referenced by the raw SQL inside the queries paths — a
  *     three-part `Database.dbo.Name` reference is routed to the connection that
  *     owns that database; a one/two-part name is attributed to the connection(s)
- *     the query file talks to via `DB::connection('...')` or a
- *     `$connection = '...'` property. Common table expressions and temp tables
- *     are not tables and are left out.
+ *     the query file talks to: through `DB::connection('...')`, a
+ *     `$connection = '...'` property, or a scanned model it references
+ *     (`new Press()->getConnection()`). A file with none of those borrows them,
+ *     one hop away, from the project classes it references (a helper that runs
+ *     the SQL it is handed); classes under a `vendor` directory are not read.
+ *     One/two-part names a file still cannot attribute are reported, not
+ *     guessed. Common table expressions and temp tables are not tables and are
+ *     left out.
  *   - every base table a committed `<connection>-views.sql` joins, so tables
  *     used only inside a view still get pulled
  *
@@ -47,6 +56,7 @@ final readonly class DetectSourceTables
         private ModelScanner $modelScanner,
         private SchemaFixtureParser $schemaFixtureParser,
         private ScanPaths $scanPaths,
+        private SourceParser $sourceParser,
     ) {}
 
     public function handle(): DetectionResult
@@ -59,7 +69,9 @@ final readonly class DetectSourceTables
         /** @var array<string, list<string>> */
         $detected = array_fill_keys($connections, []);
 
-        foreach ([$this->tablesOfModels($modelsPerConnection), $this->tablesInQueries($connections, $databaseMap), $this->tablesInViews($connections, $databaseMap)] as $tablesPerConnection) {
+        $queryTables = $this->tablesInQueries($connections, $databaseMap, $this->modelConnections($modelsPerConnection));
+
+        foreach ([$this->tablesOfModels($modelsPerConnection), $queryTables['tables'], $this->tablesInViews($connections, $databaseMap)] as $tablesPerConnection) {
             foreach ($tablesPerConnection as $connection => $names) {
                 array_push($detected[$connection], ...$names);
             }
@@ -118,7 +130,12 @@ final readonly class DetectSourceTables
             );
         }
 
-        return new DetectionResult(manifest: $reconciled, connections: $summaries, droppedConnections: $droppedConnections);
+        return new DetectionResult(
+            manifest: $reconciled,
+            connections: $summaries,
+            droppedConnections: $droppedConnections,
+            unattributedQueries: $queryTables['unattributed'],
+        );
     }
 
     /**
@@ -196,32 +213,149 @@ final readonly class DetectSourceTables
     }
 
     /**
-     * The tables the raw SQL in the query files references, by the connection
-     * that owns them.
+     * Fully qualified model class => its connection, for the scanned models.
      *
-     * @param  list<string>  $connections
-     * @param  array<string, string>  $databaseMap
+     * @param  array<string, list<ScannedModel>>  $modelsPerConnection
      *
-     * @return array<string, list<string>>
+     * @return array<string, string>
      */
-    private function tablesInQueries(array $connections, array $databaseMap): array
+    private function modelConnections(array $modelsPerConnection): array
     {
-        $found = [];
+        $modelConnections = [];
 
-        foreach ($this->queryFiles() as $file) {
-            $contents = File::get($file);
-            $fileConnections = array_values(array_intersect($this->connectionsNamedIn($contents), $connections));
-
-            if ($fileConnections === []) {
-                continue;
-            }
-
-            foreach ($this->tablesReferencedIn($this->sqlStringsOf($contents), $fileConnections, $databaseMap, $connections) as $connection => $names) {
-                $found[$connection] = [...$found[$connection] ?? [], ...$names];
+        foreach ($modelsPerConnection as $connection => $scannedModels) {
+            foreach ($scannedModels as $scannedModel) {
+                $modelConnections[$scannedModel->class] = $connection;
             }
         }
 
-        return $found;
+        return $modelConnections;
+    }
+
+    /**
+     * The tables the raw SQL in the query files references, by the connection
+     * that owns them, and per query file the names no connection was found for.
+     *
+     * @param  list<string>  $connections
+     * @param  array<string, string>  $databaseMap
+     * @param  array<string, string>  $modelConnections
+     *
+     * @return array{tables: array<string, list<string>>, unattributed: array<string, list<string>>}
+     */
+    private function tablesInQueries(array $connections, array $databaseMap, array $modelConnections): array
+    {
+        $found = [];
+        $unattributed = [];
+
+        foreach ($this->queryFiles() as $file) {
+            $contents = File::get($file);
+            $referencedClasses = $this->classesReferencedIn($contents);
+
+            $fileConnections = $this->connectionsOf($contents, $referencedClasses, $modelConnections, $connections);
+
+            if ($fileConnections === []) {
+                $fileConnections = $this->connectionsOfHelpers($referencedClasses, $modelConnections, $connections);
+            }
+
+            $routed = $this->tablesReferencedIn($this->sqlStringsOf($contents), $fileConnections, $databaseMap, $connections);
+
+            foreach ($routed['tables'] as $connection => $names) {
+                $found[$connection] = [...$found[$connection] ?? [], ...$names];
+            }
+
+            if ($routed['unattributed'] !== []) {
+                $unattributed[$file] = array_values(array_unique($routed['unattributed']));
+            }
+        }
+
+        return ['tables' => $found, 'unattributed' => $unattributed];
+    }
+
+    /**
+     * The fixture connections a PHP file talks to: those it names, and those of
+     * the scanned models it references.
+     *
+     * @param  list<string>  $referencedClasses
+     * @param  array<string, string>  $modelConnections
+     * @param  list<string>  $connections
+     *
+     * @return list<string>
+     */
+    private function connectionsOf(string $php, array $referencedClasses, array $modelConnections, array $connections): array
+    {
+        $modelsConnections = array_values(array_intersect_key($modelConnections, array_flip($referencedClasses)));
+
+        return array_values(array_intersect(array_unique([...$this->connectionsNamedIn($php), ...$modelsConnections]), $connections));
+    }
+
+    /**
+     * The fixture connections of the project classes a query file references,
+     * one hop away: the helper that runs the SQL it is handed. Models are left
+     * out (their connection already counts), and so are classes under a
+     * `vendor` directory and classes that cannot be loaded.
+     *
+     * @param  list<string>  $referencedClasses
+     * @param  array<string, string>  $modelConnections
+     * @param  list<string>  $connections
+     *
+     * @return list<string>
+     */
+    private function connectionsOfHelpers(array $referencedClasses, array $modelConnections, array $connections): array
+    {
+        $helperConnections = [];
+
+        foreach ($referencedClasses as $class) {
+            $helperFile = array_key_exists($class, $modelConnections) ? null : $this->projectFileOf($class);
+
+            if ($helperFile === null) {
+                continue;
+            }
+
+            $helperSource = File::get($helperFile);
+
+            array_push($helperConnections, ...$this->connectionsOf($helperSource, $this->classesReferencedIn($helperSource), $modelConnections, $connections));
+        }
+
+        return array_values(array_unique($helperConnections));
+    }
+
+    /**
+     * The fully qualified names of the classes a PHP file's code refers to.
+     *
+     * @return list<string>
+     */
+    private function classesReferencedIn(string $php): array
+    {
+        $classes = [];
+
+        foreach ((new NodeFinder)->findInstanceOf($this->sourceParser->parse($php), Name::class) as $name) {
+            $resolvedName = $name->getAttribute('resolvedName');
+
+            if ($resolvedName instanceof Name) {
+                $classes[] = $resolvedName->toString();
+            }
+        }
+
+        return array_values(array_unique($classes));
+    }
+
+    /**
+     * The file a class is declared in, unless it is someone else's code (under a
+     * `vendor` directory) or cannot be loaded.
+     */
+    private function projectFileOf(string $class): ?string
+    {
+        if (!class_exists($class) && !interface_exists($class) && !trait_exists($class)) {
+            return null;
+        }
+
+        $file = new ReflectionClass($class)->getFileName();
+
+        if ($file === false || str_contains($file, DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR)) {
+            return null;
+        }
+
+        return $file;
     }
 
     /**
@@ -244,7 +378,7 @@ final readonly class DetectSourceTables
                 continue;
             }
 
-            foreach ($this->tablesReferencedIn(File::get($viewsPath), [$connection], $databaseMap, $connections) as $viewConnection => $names) {
+            foreach ($this->tablesReferencedIn(File::get($viewsPath), [$connection], $databaseMap, $connections)['tables'] as $viewConnection => $names) {
                 $found[$viewConnection] = [...$found[$viewConnection] ?? [], ...$names];
             }
         }
@@ -276,7 +410,7 @@ final readonly class DetectSourceTables
 
     /**
      * The PHP files under the configured queries paths, recursively and in name
-     * order.
+     * order, by their real path.
      *
      * @return list<string>
      */
@@ -291,7 +425,7 @@ final readonly class DetectSourceTables
         $files = [];
 
         foreach (Finder::create()->in($directories)->files()->name('*.php')->sortByName() as $file) {
-            $files[] = $file->getPathname();
+            $files[] = $file->getRealPath();
         }
 
         return $files;
@@ -332,14 +466,16 @@ final readonly class DetectSourceTables
 
     /**
      * The tables named after a FROM/JOIN/INTO/UPDATE in a block of SQL, grouped
-     * by the connection that owns them. Comments are ignored, as are temp tables
-     * (`#name`) and the names a `WITH name AS (...)` clause defines.
+     * by the connection that owns them; the one/two-part names come back as
+     * unattributed when there is no file connection to give them. Comments are
+     * ignored, as are temp tables (`#name`) and the names a
+     * `WITH name AS (...)` clause defines.
      *
      * @param  list<string>  $fileConnections
      * @param  array<string, string>  $databaseMap
      * @param  list<string>  $connections
      *
-     * @return array<string, list<string>>
+     * @return array{tables: array<string, list<string>>, unattributed: list<string>}
      */
     private function tablesReferencedIn(string $sql, array $fileConnections, array $databaseMap, array $connections): array
     {
@@ -355,6 +491,7 @@ final readonly class DetectSourceTables
         ));
 
         $found = [];
+        $unattributed = [];
 
         foreach ($matches[1] as $reference) {
             $parts = array_values(array_filter(
@@ -382,11 +519,15 @@ final readonly class DetectSourceTables
                 continue;
             }
 
+            if ($fileConnections === []) {
+                $unattributed[] = $name;
+            }
+
             foreach ($fileConnections as $connection) {
                 $found[$connection][] = $name;
             }
         }
 
-        return $found;
+        return ['tables' => $found, 'unattributed' => $unattributed];
     }
 }
