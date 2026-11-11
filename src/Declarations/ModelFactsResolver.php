@@ -24,10 +24,10 @@ use ReflectionClass;
 final class ModelFactsResolver
 {
     /**
-     * @param  array<string, Table>  $tables
+     * @param  Table|null  $ddl  The model's table in the schema fixture, null when the fixture does not define it.
      * @param  list<string>  $views
      */
-    public function resolve(ScannedModel $scannedModel, string $connection, array $tables, array $views): ModelFacts
+    public function resolve(ScannedModel $scannedModel, string $connection, ?Table $ddl, array $views): ModelFacts
     {
         $model = $scannedModel->model;
         $reflection = $scannedModel->reflection;
@@ -51,8 +51,6 @@ final class ModelFactsResolver
         if (!$effective->connectionDeclared) {
             $issues[] = 'connection not declared on the model';
         }
-
-        $ddl = $this->findTable($tables, $table);
 
         if (!$ddl instanceof Table) {
             if ($this->isView($views, $table)) {
@@ -285,19 +283,5 @@ final class ModelFactsResolver
         }
 
         return $issues;
-    }
-
-    /**
-     * @param  array<string, Table>  $tables
-     */
-    private function findTable(array $tables, string $name): ?Table
-    {
-        foreach ($tables as $table => $shape) {
-            if (strcasecmp($table, $name) === 0) {
-                return $shape;
-            }
-        }
-
-        return null;
     }
 }

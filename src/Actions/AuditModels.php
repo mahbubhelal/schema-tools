@@ -83,21 +83,14 @@ final readonly class AuditModels
 
         foreach ($connections as $connection) {
             $listed = $namesPerConnection[$connection] ?? [];
-            $listedKeys = array_map(strtolower(...), $listed);
-
             $defined = [...array_keys($fixtures[$connection]), ...$views[$connection]];
-            $definedKeys = array_map(strtolower(...), $defined);
 
-            foreach ($listed as $name) {
-                if (!in_array(strtolower($name), $definedKeys, true)) {
-                    $issues[] = "[{$connection}] manifest lists `{$name}` but it is in neither the schema nor the views fixture";
-                }
+            foreach (array_udiff($listed, $defined, strcasecmp(...)) as $name) {
+                $issues[] = "[{$connection}] manifest lists `{$name}` but it is in neither the schema nor the views fixture";
             }
 
-            foreach ($defined as $name) {
-                if (!in_array(strtolower($name), $listedKeys, true)) {
-                    $issues[] = "[{$connection}] fixture defines `{$name}` but it is absent from the manifest (stale?)";
-                }
+            foreach (array_udiff($defined, $listed, strcasecmp(...)) as $name) {
+                $issues[] = "[{$connection}] fixture defines `{$name}` but it is absent from the manifest (stale?)";
             }
         }
 

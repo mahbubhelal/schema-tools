@@ -37,8 +37,6 @@ use PhpParser\PrettyPrinter\Standard;
  */
 final readonly class DeclarationRewriter
 {
-    private const array TABLE_FIELDS = ['name' => 'table', 'key' => 'primaryKey', 'keyType' => 'keyType', 'incrementing' => 'incrementing', 'timestamps' => 'timestamps'];
-
     private const array PROTECTED_PROPERTIES = ['connection', 'table', 'primaryKey', 'keyType'];
 
     private Standard $printer;
@@ -74,9 +72,10 @@ final readonly class DeclarationRewriter
             $attributes = [];
             $properties = [];
             $table = $existingAttributes['Table'] ?? null;
+            $otherArguments = $table instanceof Attribute ? $this->otherTableArguments($table) : [];
 
-            if ($table instanceof Attribute && $this->otherTableArguments($table) !== []) {
-                $table->args = $this->otherTableArguments($table);
+            if ($table instanceof Attribute && $otherArguments !== []) {
+                $table->args = $otherArguments;
                 $attributes['Table'] = $table;
             }
 
@@ -129,8 +128,8 @@ final readonly class DeclarationRewriter
 
                         break;
                     case 'Table':
-                        foreach ($this->tableArguments($attribute) as $argument => $expr) {
-                            $values[self::TABLE_FIELDS[$argument]] = $expr;
+                        foreach ($this->declarationReader->tableArguments($attribute) as $argument => $expr) {
+                            $values[DeclarationReader::TABLE_FIELDS[$argument]] = $expr;
                         }
 
                         break;
@@ -282,7 +281,7 @@ final readonly class DeclarationRewriter
 
         $tableArguments = [];
 
-        foreach (self::TABLE_FIELDS as $argument => $field) {
+        foreach (DeclarationReader::TABLE_FIELDS as $argument => $field) {
             if (!isset($desired[$field])) {
                 continue;
             }
@@ -302,14 +301,15 @@ final readonly class DeclarationRewriter
 
         if ($tableArguments !== [] && !$table instanceof Attribute) {
             foreach ($inheritedTable as $argument => $value) {
-                $field = self::TABLE_FIELDS[$argument];
+                $field = DeclarationReader::TABLE_FIELDS[$argument];
 
                 if (!isset($tableArguments[$argument]) && !isset($desired[$field])) {
                     $tableArguments[$argument] = is_bool($value) ? $this->bool($value) : new String_($value);
                 }
             }
 
-            uksort($tableArguments, static fn (string $a, string $b): int => array_search($a, DeclarationReader::TABLE_ARGUMENTS, true) <=> array_search($b, DeclarationReader::TABLE_ARGUMENTS, true));
+            $argumentOrder = array_keys(DeclarationReader::TABLE_FIELDS);
+            uksort($tableArguments, static fn (string $a, string $b): int => array_search($a, $argumentOrder, true) <=> array_search($b, $argumentOrder, true));
         }
 
         $otherArguments = $table instanceof Attribute ? $this->otherTableArguments($table) : [];
@@ -345,7 +345,7 @@ final readonly class DeclarationRewriter
     {
         return array_values(array_filter(
             $table->args,
-            static fn (Arg $arg): bool => $arg->name instanceof Identifier && !in_array($arg->name->toString(), DeclarationReader::TABLE_ARGUMENTS, true),
+            static fn (Arg $arg): bool => $arg->name instanceof Identifier && !array_key_exists($arg->name->toString(), DeclarationReader::TABLE_FIELDS),
         ));
     }
 
@@ -535,33 +535,6 @@ final readonly class DeclarationRewriter
         }
 
         return $keys;
-    }
-
-    /**
-     * The `#[Table]` arguments the audit knows, keyed by name; the first
-     * positional argument is the table name.
-     *
-     * @return array<string, Expr>
-     */
-    private function tableArguments(Attribute $attribute): array
-    {
-        $arguments = [];
-
-        foreach ($attribute->args as $position => $arg) {
-            if ($arg->name instanceof Identifier) {
-                $name = $arg->name->toString();
-            } elseif ($position === 0) {
-                $name = 'name';
-            } else {
-                continue;
-            }
-
-            if (in_array($name, DeclarationReader::TABLE_ARGUMENTS, true)) {
-                $arguments[$name] = $arg->value;
-            }
-        }
-
-        return $arguments;
     }
 
     private function isTrue(Expr $expr): bool

@@ -29,25 +29,20 @@ final readonly class ManifestData
      */
     public function all(): array
     {
+        /** @var array<string, array<string, string>> Connection => lowercase name => first spelling. */
         $all = [];
 
         foreach ([$this->manual, $this->generated] as $section) {
             foreach ($section as $connection => $names) {
                 $all[$connection] ??= [];
-                $seen = array_map(strtolower(...), $all[$connection]);
 
                 foreach ($names as $name) {
-                    if (in_array(strtolower($name), $seen, true)) {
-                        continue;
-                    }
-
-                    $all[$connection][] = $name;
-                    $seen[] = strtolower($name);
+                    $all[$connection][strtolower($name)] ??= $name;
                 }
             }
         }
 
-        return $all;
+        return array_map(array_values(...), $all);
     }
 
     /**

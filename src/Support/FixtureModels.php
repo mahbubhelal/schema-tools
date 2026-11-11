@@ -12,8 +12,9 @@ use Mahbub\SchemaTools\Declarations\ModelFactsResolver;
 
 /**
  * The models under the configured paths together with the parsed fixtures of
- * every fixture-backed connection, resolved once and shared by the audit and
- * the Rector rule. A model on a connection without a fixture has no facts.
+ * every fixture-backed connection, resolved once and shared by the audit, the
+ * factory check, the detector and the Rector rule. A model on a connection
+ * without a fixture has no facts.
  */
 final class FixtureModels
 {
@@ -68,6 +69,21 @@ final class FixtureModels
     }
 
     /**
+     * The schema fixture's DDL for a table of a fixture-backed connection,
+     * matched case-insensitively; null when the fixture does not define it.
+     */
+    public function table(string $connection, string $name): ?Table
+    {
+        foreach ($this->tables()[$connection] as $table => $shape) {
+            if (strcasecmp($table, $name) === 0) {
+                return $shape;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @return array<string, list<string>>
      */
     public function views(): array
@@ -105,7 +121,9 @@ final class FixtureModels
             return $this->facts[$scannedModel->class] = null;
         }
 
-        return $this->facts[$scannedModel->class] = $this->modelFactsResolver->resolve($scannedModel, $connection, $this->tables[$connection], $this->views[$connection]);
+        $ddl = $this->table($connection, $scannedModel->model->getTable());
+
+        return $this->facts[$scannedModel->class] = $this->modelFactsResolver->resolve($scannedModel, $connection, $ddl, $this->views[$connection]);
     }
 
     public function factsFor(string $class): ?ModelFacts

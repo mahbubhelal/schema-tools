@@ -8,13 +8,12 @@ use Illuminate\Support\Facades\File;
 use Mahbub\SchemaTools\Support\ConnectionDetection;
 use Mahbub\SchemaTools\Support\DetectionResult;
 use Mahbub\SchemaTools\Support\FixtureConnections;
+use Mahbub\SchemaTools\Support\FixtureModels;
 use Mahbub\SchemaTools\Support\Manifest;
 use Mahbub\SchemaTools\Support\ManifestData;
-use Mahbub\SchemaTools\Support\ModelScanner;
 use Mahbub\SchemaTools\Support\Regex;
 use Mahbub\SchemaTools\Support\ScannedModel;
 use Mahbub\SchemaTools\Support\ScanPaths;
-use Mahbub\SchemaTools\Support\SchemaFixtureParser;
 use Mahbub\SchemaTools\Support\SourceParser;
 use PhpParser\Node\Name;
 use PhpParser\NodeFinder;
@@ -52,16 +51,15 @@ final readonly class DetectSourceTables
 {
     public function __construct(
         private FixtureConnections $fixtureConnections,
+        private FixtureModels $fixtureModels,
         private Manifest $manifest,
-        private ModelScanner $modelScanner,
-        private SchemaFixtureParser $schemaFixtureParser,
         private ScanPaths $scanPaths,
         private SourceParser $sourceParser,
     ) {}
 
     public function handle(): DetectionResult
     {
-        $connections = $this->fixtureConnections->all();
+        $connections = $this->fixtureModels->connections();
         $databaseMap = $this->fixtureConnections->databaseMap();
 
         $modelsPerConnection = $this->modelsPerConnection($connections);
@@ -77,7 +75,7 @@ final readonly class DetectSourceTables
             }
         }
 
-        $canonical = $this->canonicalNames($modelsPerConnection, $connections);
+        $canonical = $this->canonicalNames($modelsPerConnection);
 
         $canonicalise = static fn (string $name): string => $canonical[strtolower($name)] ?? $name;
 
@@ -147,13 +145,11 @@ final readonly class DetectSourceTables
     {
         $models = [];
 
-        foreach ($this->scanPaths->resolve('models') as $path) {
-            foreach ($this->modelScanner->scan($path) as $scannedModel) {
-                $connection = $scannedModel->model->getConnectionName();
+        foreach ($this->fixtureModels->scanned() as $scannedModel) {
+            $connection = $scannedModel->model->getConnectionName();
 
-                if ($connection !== null && in_array($connection, $connections, true)) {
-                    $models[$connection][] = $scannedModel;
-                }
+            if ($connection !== null && in_array($connection, $connections, true)) {
+                $models[$connection][] = $scannedModel;
             }
         }
 
@@ -190,11 +186,10 @@ final readonly class DetectSourceTables
      * name as the fixture DDL spells it.
      *
      * @param  array<string, list<ScannedModel>>  $modelsPerConnection
-     * @param  list<string>  $connections
      *
      * @return array<string, string>
      */
-    private function canonicalNames(array $modelsPerConnection, array $connections): array
+    private function canonicalNames(array $modelsPerConnection): array
     {
         $canonical = [];
 
@@ -205,7 +200,7 @@ final readonly class DetectSourceTables
             }
         }
 
-        foreach ($this->fixtureNames($connections) as $name) {
+        foreach ($this->fixtureNames() as $name) {
             $canonical[strtolower($name)] ??= $name;
         }
 
@@ -389,20 +384,15 @@ final readonly class DetectSourceTables
     /**
      * Every table and view name the fixtures define, as the DDL spells it.
      *
-     * @param  list<string>  $connections
-     *
      * @return list<string>
      */
-    private function fixtureNames(array $connections): array
+    private function fixtureNames(): array
     {
+        $views = $this->fixtureModels->views();
         $names = [];
 
-        foreach ($connections as $connection) {
-            array_push(
-                $names,
-                ...array_keys($this->schemaFixtureParser->parseTables($this->fixtureConnections->schemaFile($connection))),
-                ...$this->schemaFixtureParser->parseViews($this->fixtureConnections->viewsFile($connection)),
-            );
+        foreach ($this->fixtureModels->tables() as $connection => $tables) {
+            array_push($names, ...array_keys($tables), ...$views[$connection]);
         }
 
         return $names;

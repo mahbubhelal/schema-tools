@@ -9,17 +9,14 @@ use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\Sequence;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Config;
+use Mahbub\SchemaTools\Support\ClassScanner;
 use Mahbub\SchemaTools\Support\ColumnType;
 use Mahbub\SchemaTools\Support\FactoryCheckResult;
-use Mahbub\SchemaTools\Support\FixtureConnections;
+use Mahbub\SchemaTools\Support\FixtureModels;
 use Mahbub\SchemaTools\Support\Manifest;
-use Mahbub\SchemaTools\Support\Regex;
 use Mahbub\SchemaTools\Support\Report;
 use Mahbub\SchemaTools\Support\ScanPaths;
-use Mahbub\SchemaTools\Support\SchemaFixtureParser;
 use Mahbub\SchemaTools\Support\Table;
-use ReflectionClass;
-use Symfony\Component\Finder\Finder;
 use Throwable;
 
 /**
@@ -38,23 +35,16 @@ use Throwable;
 final readonly class CheckFactories
 {
     public function __construct(
-        private FixtureConnections $fixtureConnections,
+        private FixtureModels $fixtureModels,
         private Manifest $manifest,
-        private SchemaFixtureParser $schemaFixtureParser,
         private ScanPaths $scanPaths,
+        private ClassScanner $classScanner,
     ) {}
 
     public function handle(): FactoryCheckResult
     {
-        $connections = $this->fixtureConnections->all();
-        $manifestData = $this->manifest->load();
-
-        /** @var array<string, array<string, Table>> */
-        $schemas = [];
-
-        foreach ($connections as $connection) {
-            $schemas[$connection] = $this->schemaFixtureParser->parseTables($this->fixtureConnections->schemaFile($connection));
-        }
+        $connections = $this->fixtureModels->connections();
+        $manifestNames = $this->manifest->load()->all();
 
         $reports = [];
         $skipped = [];
@@ -72,11 +62,12 @@ final readonly class CheckFactories
             }
 
             $table = $model->getTable();
-            $ddl = $this->findTable($schemas[$connection], $table);
+            $ddl = $this->fixtureModels->table($connection, $table);
+            $tracked = array_any($manifestNames[$connection] ?? [], static fn (string $name): bool => strcasecmp($name, $table) === 0);
 
             $issues = [];
 
-            if (!in_array(strtolower($table), array_map(strtolower(...), $manifestData->names($connection)), true)) {
+            if (!$tracked) {
                 $issues[] = "table `{$table}` is not tracked in the manifest";
             }
 
@@ -176,9 +167,8 @@ final readonly class CheckFactories
 
     /**
      * The concrete factories under the configured factories paths, in name
-     * order. A file without a namespace, or one that declares no class of its
-     * own name, holds no factory; a factory that fails to load or construct
-     * stops the check with its own error.
+     * order (see ClassScanner); a factory that fails to construct stops the
+     * check with its own error.
      *
      * @return list<Factory<Model>>
      */
@@ -190,52 +180,9 @@ final readonly class CheckFactories
             return [];
         }
 
-        $factories = [];
-
-        foreach (Finder::create()->in($directories)->files()->name('*.php')->sortByName() as $file) {
-            if (preg_match('/^namespace ([^;]+);/m', $file->getContents(), $namespaceMatch) !== 1) {
-                Regex::failOnError();
-
-                continue;
-            }
-
-            $class = $namespaceMatch[1] . '\\' . $file->getBasename('.php');
-
-            if (!$this->isConcreteFactory($class)) {
-                continue;
-            }
-
-            $factories[] = new ReflectionClass($class)->newInstance();
-        }
-
-        return $factories;
-    }
-
-    /**
-     * @phpstan-assert-if-true class-string<Factory<Model>> $class
-     */
-    private function isConcreteFactory(string $class): bool
-    {
-        if (!class_exists($class)) {
-            return false;
-        }
-
-        $reflection = new ReflectionClass($class);
-
-        return !$reflection->isAbstract() && $reflection->isSubclassOf(Factory::class);
-    }
-
-    /**
-     * @param  array<string, Table>  $tables
-     */
-    private function findTable(array $tables, string $name): ?Table
-    {
-        foreach ($tables as $table => $shape) {
-            if (strcasecmp($table, $name) === 0) {
-                return $shape;
-            }
-        }
-
-        return null;
+        return array_map(
+            static fn (string $class): Factory => new $class,
+            array_keys($this->classScanner->concreteSubclasses($directories, Factory::class)),
+        );
     }
 }

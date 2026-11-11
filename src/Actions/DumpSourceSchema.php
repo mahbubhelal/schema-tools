@@ -144,28 +144,18 @@ final readonly class DumpSourceSchema
     private function orderSelection(array $existing, array $selected): OrderedNames
     {
         $ordered = [];
+        $dropped = [];
 
         foreach ($existing as $name) {
             if (array_key_exists(strtolower($name), $selected)) {
                 $ordered[] = $selected[strtolower($name)];
+            } else {
+                $dropped[] = $name;
             }
         }
 
-        $orderedLower = array_map(strtolower(...), $ordered);
-        $new = [];
-
-        foreach ($selected as $lower => $canonical) {
-            if (!in_array($lower, $orderedLower, true)) {
-                $new[] = $canonical;
-            }
-        }
-
+        $new = array_values(array_diff_key($selected, array_flip(array_map(strtolower(...), $existing))));
         sort($new);
-
-        $dropped = array_values(array_filter(
-            $existing,
-            static fn (string $name): bool => !array_key_exists(strtolower($name), $selected),
-        ));
 
         return new OrderedNames(ordered: [...$ordered, ...$new], dropped: $dropped);
     }

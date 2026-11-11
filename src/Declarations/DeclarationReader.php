@@ -21,7 +21,11 @@ final class DeclarationReader
 {
     public const string ATTRIBUTE_NAMESPACE = 'Illuminate\\Database\\Eloquent\\Attributes\\';
 
-    public const array TABLE_ARGUMENTS = ['name', 'key', 'keyType', 'incrementing', 'timestamps'];
+    /**
+     * The audited `#[Table]` arguments, in canonical order, each with the
+     * property it stands for.
+     */
+    public const array TABLE_FIELDS = ['name' => 'table', 'key' => 'primaryKey', 'keyType' => 'keyType', 'incrementing' => 'incrementing', 'timestamps' => 'timestamps'];
 
     public function read(Class_ $class): OwnDeclarations
     {
@@ -75,17 +79,38 @@ final class DeclarationReader
     {
         $name = $this->attributeName($attribute);
 
-        if ($name !== 'Table') {
-            return $name;
+        if ($name === 'Table' && $this->tableArguments($attribute) === []) {
+            return null;
         }
 
+        return $name;
+    }
+
+    /**
+     * The `#[Table]` arguments the audit knows, keyed by name; the first
+     * positional argument is the table name.
+     *
+     * @return array<string, Expr>
+     */
+    public function tableArguments(Attribute $attribute): array
+    {
+        $arguments = [];
+
         foreach ($attribute->args as $position => $arg) {
-            if ($arg->name instanceof Identifier ? in_array($arg->name->toString(), self::TABLE_ARGUMENTS, true) : $position === 0) {
-                return $name;
+            if ($arg->name instanceof Identifier) {
+                $name = $arg->name->toString();
+            } elseif ($position === 0) {
+                $name = 'name';
+            } else {
+                continue;
+            }
+
+            if (array_key_exists($name, self::TABLE_FIELDS)) {
+                $arguments[$name] = $arg->value;
             }
         }
 
-        return null;
+        return $arguments;
     }
 
     /**
