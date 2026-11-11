@@ -54,7 +54,7 @@ final class Manifest
 
             PHP;
 
-        file_put_contents($this->path(), rtrim($contents, "\n") . "\n");
+        file_put_contents($this->path(), $contents);
     }
 
     /**

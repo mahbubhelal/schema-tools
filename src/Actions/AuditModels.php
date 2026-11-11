@@ -13,7 +13,6 @@ use Mahbub\SchemaTools\Support\Manifest;
 use Mahbub\SchemaTools\Support\ModelAuditResult;
 use Mahbub\SchemaTools\Support\Report;
 use Mahbub\SchemaTools\Support\SourceParser;
-use Mahbub\SchemaTools\Support\Table;
 use PhpParser\Node\Stmt\Class_;
 
 /**
@@ -64,24 +63,22 @@ final readonly class AuditModels
 
         return new ModelAuditResult(
             models: $reports,
-            manifestIssues: $this->manifestIssues($this->fixtureModels->connections(), $this->fixtureModels->tables(), $this->fixtureModels->views()),
+            manifestIssues: $this->manifestIssues(),
             skipped: $skipped,
         );
     }
 
     /**
-     * @param  list<string>  $connections
-     * @param  array<string, array<string, Table>>  $fixtures
-     * @param  array<string, list<string>>  $views
-     *
      * @return list<string>
      */
-    private function manifestIssues(array $connections, array $fixtures, array $views): array
+    private function manifestIssues(): array
     {
         $namesPerConnection = $this->manifest->load()->all();
+        $fixtures = $this->fixtureModels->tables();
+        $views = $this->fixtureModels->views();
         $issues = [];
 
-        foreach ($connections as $connection) {
+        foreach ($this->fixtureModels->connections() as $connection) {
             $listed = $namesPerConnection[$connection] ?? [];
             $defined = [...array_keys($fixtures[$connection]), ...$views[$connection]];
 

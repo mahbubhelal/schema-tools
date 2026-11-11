@@ -62,7 +62,7 @@ final readonly class DetectSourceTables
         $connections = $this->fixtureModels->connections();
         $databaseMap = $this->fixtureConnections->databaseMap();
 
-        $modelsPerConnection = $this->modelsPerConnection($connections);
+        $modelsPerConnection = $this->modelsPerConnection();
 
         /** @var array<string, list<string>> */
         $detected = array_fill_keys($connections, []);
@@ -137,18 +137,16 @@ final readonly class DetectSourceTables
     }
 
     /**
-     * @param  list<string>  $connections
-     *
      * @return array<string, list<ScannedModel>>
      */
-    private function modelsPerConnection(array $connections): array
+    private function modelsPerConnection(): array
     {
         $models = [];
 
         foreach ($this->fixtureModels->scanned() as $scannedModel) {
             $connection = $scannedModel->model->getConnectionName();
 
-            if ($connection !== null && in_array($connection, $connections, true)) {
+            if ($this->fixtureModels->isFixtureBacked($connection)) {
                 $models[$connection][] = $scannedModel;
             }
         }
@@ -252,7 +250,7 @@ final readonly class DetectSourceTables
                 $fileConnections = $this->connectionsOfHelpers($referencedClasses, $modelConnections, $connections);
             }
 
-            $routed = $this->tablesReferencedIn($this->sqlStringsOf($contents), $fileConnections, $databaseMap, $connections);
+            $routed = $this->tablesReferencedIn($this->sqlStringsOf($contents), $fileConnections, $databaseMap);
 
             foreach ($routed['tables'] as $connection => $names) {
                 $found[$connection] = [...$found[$connection] ?? [], ...$names];
@@ -373,7 +371,7 @@ final readonly class DetectSourceTables
                 continue;
             }
 
-            foreach ($this->tablesReferencedIn(File::get($viewsPath), [$connection], $databaseMap, $connections)['tables'] as $viewConnection => $names) {
+            foreach ($this->tablesReferencedIn(File::get($viewsPath), [$connection], $databaseMap)['tables'] as $viewConnection => $names) {
                 $found[$viewConnection] = [...$found[$viewConnection] ?? [], ...$names];
             }
         }
@@ -462,12 +460,11 @@ final readonly class DetectSourceTables
      * `WITH name AS (...)` clause defines.
      *
      * @param  list<string>  $fileConnections
-     * @param  array<string, string>  $databaseMap
-     * @param  list<string>  $connections
+     * @param  array<string, string>  $databaseMap  Lowercase database name => the fixture-backed connection on it.
      *
      * @return array{tables: array<string, list<string>>, unattributed: list<string>}
      */
-    private function tablesReferencedIn(string $sql, array $fileConnections, array $databaseMap, array $connections): array
+    private function tablesReferencedIn(string $sql, array $fileConnections, array $databaseMap): array
     {
         $sql = Regex::orFail(preg_replace(['~--[^\n]*~', '~/\*.*?\*/~s'], '', $sql));
 
@@ -502,7 +499,7 @@ final readonly class DetectSourceTables
             if (count($parts) >= 3) {
                 $connection = $databaseMap[strtolower($parts[0])] ?? null;
 
-                if ($connection !== null && in_array($connection, $connections, true)) {
+                if ($connection !== null) {
                     $found[$connection][] = $name;
                 }
 

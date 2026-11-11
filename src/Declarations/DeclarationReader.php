@@ -9,6 +9,7 @@ use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\ConstFetch;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
+use PhpParser\Node\PropertyItem;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\Property;
 
@@ -31,13 +32,9 @@ final class DeclarationReader
     {
         $attributes = [];
 
-        foreach ($class->attrGroups as $group) {
-            foreach ($group->attrs as $attribute) {
-                $name = $this->declaredName($attribute);
-
-                if ($name !== null) {
-                    $attributes[] = $name;
-                }
+        foreach ($this->auditedAttributes($class) as $name => $attribute) {
+            if ($this->declaresSchema($name, $attribute)) {
+                $attributes[] = $name;
             }
         }
 
@@ -45,6 +42,45 @@ final class DeclarationReader
         $visibilities = [];
         $nullKeyProperty = false;
 
+        foreach ($this->auditedProperties($class) as $name => [$property, $item]) {
+            $properties[] = $name;
+            $visibilities[$name] = $this->visibility($property);
+
+            if ($name === 'primaryKey' && $this->isNull($item->default)) {
+                $nullKeyProperty = true;
+            }
+        }
+
+        return new OwnDeclarations($attributes, $properties, $visibilities, $nullKeyProperty);
+    }
+
+    /**
+     * The class's audited Eloquent attributes, in source order, keyed by short
+     * name.
+     *
+     * @return iterable<string, Attribute>
+     */
+    public function auditedAttributes(Class_ $class): iterable
+    {
+        foreach ($class->attrGroups as $group) {
+            foreach ($group->attrs as $attribute) {
+                $name = $this->attributeName($attribute);
+
+                if ($name !== null) {
+                    yield $name => $attribute;
+                }
+            }
+        }
+    }
+
+    /**
+     * The class's own audited property declarations, in source order, keyed by
+     * property name, each with the statement that declares it.
+     *
+     * @return iterable<string, array{Property, PropertyItem}>
+     */
+    public function auditedProperties(Class_ $class): iterable
+    {
         foreach ($class->stmts as $stmt) {
             if (!$stmt instanceof Property) {
                 continue;
@@ -53,37 +89,11 @@ final class DeclarationReader
             foreach ($stmt->props as $item) {
                 $name = $item->name->toString();
 
-                if (!in_array($name, OwnDeclarations::PROPERTY_ORDER, true)) {
-                    continue;
-                }
-
-                $properties[] = $name;
-                $visibilities[$name] = $this->visibility($stmt);
-
-                if ($name === 'primaryKey' && $this->isNull($item->default)) {
-                    $nullKeyProperty = true;
+                if (in_array($name, OwnDeclarations::PROPERTY_ORDER, true)) {
+                    yield $name => [$stmt, $item];
                 }
             }
         }
-
-        return new OwnDeclarations($attributes, $properties, $visibilities, $nullKeyProperty);
-    }
-
-    /**
-     * The short name of the attribute when it declares schema metadata: any
-     * audited attribute but a `#[Table]` that carries none of the audited
-     * arguments (say only `dateFormat`), which declares nothing the audit
-     * cares about.
-     */
-    public function declaredName(Attribute $attribute): ?string
-    {
-        $name = $this->attributeName($attribute);
-
-        if ($name === 'Table' && $this->tableArguments($attribute) === []) {
-            return null;
-        }
-
-        return $name;
     }
 
     /**
@@ -143,5 +153,15 @@ final class DeclarationReader
     public function isNull(?Expr $expr): bool
     {
         return !$expr instanceof Expr || ($expr instanceof ConstFetch && strtolower($expr->name->toString()) === 'null');
+    }
+
+    /**
+     * Whether an audited attribute declares schema metadata: any but a
+     * `#[Table]` that carries none of the audited arguments (say only
+     * `dateFormat`), which declares nothing the audit cares about.
+     */
+    private function declaresSchema(string $name, Attribute $attribute): bool
+    {
+        return $name !== 'Table' || $this->tableArguments($attribute) !== [];
     }
 }

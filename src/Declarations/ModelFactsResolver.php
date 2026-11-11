@@ -141,18 +141,7 @@ final class ModelFactsResolver
      */
     private function inheritedTable(ReflectionClass $reflection): array
     {
-        $table = null;
-
-        foreach ($reflection->getTraits() as $trait) {
-            $attributes = $trait->getAttributes(TableAttribute::class);
-
-            if ($attributes !== []) {
-                $table = $attributes[0]->newInstance();
-
-                break;
-            }
-        }
-
+        $table = $this->firstAttribute($reflection->getTraits(), TableAttribute::class);
         $parent = $reflection->getParentClass();
 
         if ($table === null && $parent instanceof ReflectionClass) {
@@ -226,14 +215,36 @@ final class ModelFactsResolver
         $class = $reflection;
 
         do {
-            foreach ([$class, ...$class->getTraits()] as $candidate) {
-                $attributes = $candidate->getAttributes($attribute);
+            $instance = $this->firstAttribute([$class, ...$class->getTraits()], $attribute);
 
-                if ($attributes !== []) {
-                    return $attributes[0]->newInstance();
-                }
+            if ($instance !== null) {
+                return $instance;
             }
         } while ($class = $class->getParentClass());
+
+        return null;
+    }
+
+    /**
+     * The instance of the first of the classes or traits that carries the
+     * attribute.
+     *
+     * @template TAttribute of object
+     *
+     * @param  array<ReflectionClass<object>>  $candidates
+     * @param  class-string<TAttribute>  $attribute
+     *
+     * @return TAttribute|null
+     */
+    private function firstAttribute(array $candidates, string $attribute): ?object
+    {
+        foreach ($candidates as $candidate) {
+            $attributes = $candidate->getAttributes($attribute);
+
+            if ($attributes !== []) {
+                return $attributes[0]->newInstance();
+            }
+        }
 
         return null;
     }

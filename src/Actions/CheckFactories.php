@@ -43,7 +43,6 @@ final readonly class CheckFactories
 
     public function handle(): FactoryCheckResult
     {
-        $connections = $this->fixtureModels->connections();
         $manifestNames = $this->manifest->load()->all();
 
         $reports = [];
@@ -55,7 +54,7 @@ final readonly class CheckFactories
             $model = new $modelClass;
             $connection = $model->getConnectionName();
 
-            if ($connection === null || !in_array($connection, $connections, true)) {
+            if (!$this->fixtureModels->isFixtureBacked($connection)) {
                 $skipped[] = new Report($factory::class, ($connection ?? Config::string('database.default')) . '.' . $model->getTable(), []);
 
                 continue;

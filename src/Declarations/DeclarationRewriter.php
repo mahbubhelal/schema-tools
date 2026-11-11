@@ -118,50 +118,36 @@ final readonly class DeclarationRewriter
     {
         $values = [];
 
-        foreach ($class->attrGroups as $group) {
-            foreach ($group->attrs as $attribute) {
-                switch ($this->declarationReader->attributeName($attribute)) {
-                    case 'Connection':
-                        if (isset($attribute->args[0])) {
-                            $values['connection'] = $attribute->args[0]->value;
-                        }
+        foreach ($this->declarationReader->auditedAttributes($class) as $name => $attribute) {
+            switch ($name) {
+                case 'Connection':
+                    if (isset($attribute->args[0])) {
+                        $values['connection'] = $attribute->args[0]->value;
+                    }
 
-                        break;
-                    case 'Table':
-                        foreach ($this->declarationReader->tableArguments($attribute) as $argument => $expr) {
-                            $values[DeclarationReader::TABLE_FIELDS[$argument]] = $expr;
-                        }
+                    break;
+                case 'Table':
+                    foreach ($this->declarationReader->tableArguments($attribute) as $argument => $expr) {
+                        $values[DeclarationReader::TABLE_FIELDS[$argument]] = $expr;
+                    }
 
-                        break;
-                    case 'WithoutIncrementing':
-                        $values['incrementing'] = $this->bool(false);
+                    break;
+                case 'WithoutIncrementing':
+                    $values['incrementing'] = $this->bool(false);
 
-                        break;
-                    case 'WithoutTimestamps':
-                        $values['timestamps'] = $this->bool(false);
+                    break;
+                case 'WithoutTimestamps':
+                    $values['timestamps'] = $this->bool(false);
 
-                        break;
-                }
+                    break;
             }
         }
 
-        foreach ($class->stmts as $stmt) {
-            if (!$stmt instanceof Property) {
-                continue;
-            }
-
-            foreach ($stmt->props as $item) {
-                $name = $item->name->toString();
-
-                if (!in_array($name, OwnDeclarations::PROPERTY_ORDER, true)) {
-                    continue;
-                }
-
-                if ($item->default instanceof Expr) {
-                    $values[$name] = $item->default;
-                } elseif ($name === 'primaryKey') {
-                    $values[$name] = $this->null();
-                }
+        foreach ($this->declarationReader->auditedProperties($class) as $name => [, $item]) {
+            if ($item->default instanceof Expr) {
+                $values[$name] = $item->default;
+            } elseif ($name === 'primaryKey') {
+                $values[$name] = $this->null();
             }
         }
 
@@ -228,30 +214,14 @@ final readonly class DeclarationRewriter
     {
         $attributes = [];
 
-        foreach ($class->attrGroups as $group) {
-            foreach ($group->attrs as $attribute) {
-                $name = $this->declarationReader->attributeName($attribute);
-
-                if ($name !== null) {
-                    $attributes[$name] = $attribute;
-                }
-            }
+        foreach ($this->declarationReader->auditedAttributes($class) as $name => $attribute) {
+            $attributes[$name] = $attribute;
         }
 
         $properties = [];
 
-        foreach ($class->stmts as $stmt) {
-            if (!$stmt instanceof Property) {
-                continue;
-            }
-
-            foreach ($stmt->props as $item) {
-                $name = $item->name->toString();
-
-                if (in_array($name, OwnDeclarations::PROPERTY_ORDER, true)) {
-                    $properties[$name] = $stmt;
-                }
-            }
+        foreach ($this->declarationReader->auditedProperties($class) as $name => [$property]) {
+            $properties[$name] = $property;
         }
 
         return [$attributes, $properties];
@@ -274,7 +244,7 @@ final readonly class DeclarationRewriter
         $attributes = [];
 
         if (isset($desired['connection'])) {
-            $attribute = $existing['Connection'] ?? new Attribute(new FullyQualified(DeclarationReader::ATTRIBUTE_NAMESPACE . 'Connection'));
+            $attribute = $existing['Connection'] ?? $this->attribute('Connection');
             $attribute->args = [new Arg($desired['connection'])];
             $attributes['Connection'] = $attribute;
         }
@@ -315,8 +285,8 @@ final readonly class DeclarationRewriter
         $otherArguments = $table instanceof Attribute ? $this->otherTableArguments($table) : [];
 
         if ($tableArguments !== [] || $otherArguments !== []) {
-            $namedName = $table instanceof Attribute && array_filter($table->args, static fn (Arg $arg): bool => $arg->name instanceof Identifier && $arg->name->toString() === 'name') !== [];
-            $table ??= new Attribute(new FullyQualified(DeclarationReader::ATTRIBUTE_NAMESPACE . 'Table'));
+            $namedName = $table instanceof Attribute && array_any($table->args, static fn (Arg $arg): bool => $arg->name instanceof Identifier && $arg->name->toString() === 'name');
+            $table ??= $this->attribute('Table');
             $args = [];
 
             foreach ($tableArguments as $argument => $expr) {
@@ -329,7 +299,7 @@ final readonly class DeclarationRewriter
 
         foreach (['incrementing' => 'WithoutIncrementing', 'timestamps' => 'WithoutTimestamps'] as $field => $name) {
             if (isset($desired[$field]) && !$this->isTrue($desired[$field])) {
-                $attributes[$name] = $existing[$name] ?? new Attribute(new FullyQualified(DeclarationReader::ATTRIBUTE_NAMESPACE . $name));
+                $attributes[$name] = $existing[$name] ?? $this->attribute($name);
             }
         }
 
@@ -540,6 +510,11 @@ final readonly class DeclarationRewriter
     private function isTrue(Expr $expr): bool
     {
         return $expr instanceof ConstFetch && strtolower($expr->name->toString()) === 'true';
+    }
+
+    private function attribute(string $name): Attribute
+    {
+        return new Attribute(new FullyQualified(DeclarationReader::ATTRIBUTE_NAMESPACE . $name));
     }
 
     private function bool(bool $value): ConstFetch

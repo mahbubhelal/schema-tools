@@ -21,11 +21,11 @@ final class FixtureModels
     /** @var list<string>|null */
     private ?array $connections = null;
 
-    /** @var array<string, array<string, Table>> */
-    private array $tables = [];
+    /** @var array<string, array<string, Table>>|null */
+    private ?array $tables = null;
 
-    /** @var array<string, list<string>> */
-    private array $views = [];
+    /** @var array<string, list<string>>|null */
+    private ?array $views = null;
 
     /** @var list<ScannedModel>|null */
     private ?array $scanned = null;
@@ -46,16 +46,18 @@ final class FixtureModels
      */
     public function connections(): array
     {
-        if ($this->connections === null) {
-            $this->connections = $this->fixtureConnections->all();
+        return $this->connections ??= $this->fixtureConnections->all();
+    }
 
-            foreach ($this->connections as $connection) {
-                $this->tables[$connection] = $this->schemaFixtureParser->parseTables($this->fixtureConnections->schemaFile($connection));
-                $this->views[$connection] = $this->schemaFixtureParser->parseViews($this->fixtureConnections->viewsFile($connection));
-            }
-        }
-
-        return $this->connections;
+    /**
+     * Whether a model's connection name is one of the fixture-backed
+     * connections; a model that names none never is.
+     *
+     * @phpstan-assert-if-true =string $connection
+     */
+    public function isFixtureBacked(?string $connection): bool
+    {
+        return $connection !== null && in_array($connection, $this->connections(), true);
     }
 
     /**
@@ -63,7 +65,13 @@ final class FixtureModels
      */
     public function tables(): array
     {
-        $this->connections();
+        if ($this->tables === null) {
+            $this->tables = [];
+
+            foreach ($this->connections() as $connection) {
+                $this->tables[$connection] = $this->schemaFixtureParser->parseTables($this->fixtureConnections->schemaFile($connection));
+            }
+        }
 
         return $this->tables;
     }
@@ -88,7 +96,13 @@ final class FixtureModels
      */
     public function views(): array
     {
-        $this->connections();
+        if ($this->views === null) {
+            $this->views = [];
+
+            foreach ($this->connections() as $connection) {
+                $this->views[$connection] = $this->schemaFixtureParser->parseViews($this->fixtureConnections->viewsFile($connection));
+            }
+        }
 
         return $this->views;
     }
@@ -117,13 +131,13 @@ final class FixtureModels
 
         $connection = $scannedModel->model->getConnectionName();
 
-        if ($connection === null || !in_array($connection, $this->connections(), true)) {
+        if (!$this->isFixtureBacked($connection)) {
             return $this->facts[$scannedModel->class] = null;
         }
 
         $ddl = $this->table($connection, $scannedModel->model->getTable());
 
-        return $this->facts[$scannedModel->class] = $this->modelFactsResolver->resolve($scannedModel, $connection, $ddl, $this->views[$connection]);
+        return $this->facts[$scannedModel->class] = $this->modelFactsResolver->resolve($scannedModel, $connection, $ddl, $this->views()[$connection]);
     }
 
     public function factsFor(string $class): ?ModelFacts
