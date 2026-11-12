@@ -1,6 +1,6 @@
 FROM php:8.5.12-cli-alpine3.23
 
-RUN apk update && apk add --no-cache \
+RUN apk add --no-cache \
     $PHPIZE_DEPS zip unzip
 
 RUN pecl install pcov && docker-php-ext-enable pcov
